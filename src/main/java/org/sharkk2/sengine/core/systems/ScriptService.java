@@ -12,9 +12,16 @@ public class ScriptService {
         this.engine = engine;
     }
 
+
     public boolean executeScript(GameObject object) {
         if (!object.hasComponent(ScriptComponent.class)) return false;
-        try {object.getComponent(ScriptComponent.class).getScript().run();}
+        ScriptComponent scriptComponent = object.getComponent(ScriptComponent.class);
+        try {
+            if (engine.getTotalFrameCount() - scriptComponent.lastRunFrame >= scriptComponent.runFrameInterval) {
+                scriptComponent.getScript().accept(scriptComponent.getContext());
+                scriptComponent.lastRunFrame = engine.getTotalFrameCount();
+            }
+        }
         catch (Exception e) {
             Logger.error("Failed to run script for (" + object.id + "): " + e.getMessage());
             return false;

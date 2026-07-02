@@ -3,8 +3,11 @@
 layout (location = 0) in vec3 aPos;
 out vec3 TexDir;
 
-uniform mat4 view;
-uniform mat4 projection;
+layout(std140, binding = 0) uniform Camera {
+    mat4 projection;
+    mat4 view;
+    mat4 inverseView;
+};
 
 void main() {
     mat4 rotView = mat4(mat3(view));

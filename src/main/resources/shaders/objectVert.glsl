@@ -7,6 +7,7 @@ layout(location = 2) in vec3 aNormal;
 layout(std140, binding = 0) uniform Camera {
     mat4 uProjection;
     mat4 uView;
+    mat4 uInverseView;
 };
 
 uniform mat4 uModel;

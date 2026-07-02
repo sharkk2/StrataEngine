@@ -1,4 +1,4 @@
-package org.sharkk2.sengine.core.systems;
+package org.sharkk2.sengine.core.systems.renderer;
 
 
 import org.joml.Matrix4fc;
@@ -52,7 +52,7 @@ public class ShaderService {
         if (glGetShaderi(shader, GL_COMPILE_STATUS) == GL_FALSE) {
             String log = glGetShaderInfoLog(shader);
             glDeleteShader(shader);
-            Logger.error("Shader failed to compile");
+            Logger.error("Shader failed to compile (" + src + ")");
             throw new ShaderLoadException("Failed to compile shader! " + log);
         }
         return shader;

@@ -2,7 +2,11 @@ package org.sharkk2.sengine.core.systems.components;
 
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.core.classes.Component;
+import org.sharkk2.sengine.core.systems.renderer.Renderer;
+
+import java.nio.ByteBuffer;
 
 import static org.lwjgl.opengl.GL43.*;
 
@@ -14,7 +18,10 @@ public class ModelComponent extends Component {
     public final int ebo;
     public final int indexCount;
     public float[] vertices;
+    public float boundingRadius = 1.0f;
     public Material material = new Material();
+    public Renderer.DrawMode drawMode = Renderer.DrawMode.TRIANGLES;
+    public boolean castShadow;
 
     public static class Material {
         public Vector3f albedo = new Vector3f(1, 1, 1);
@@ -32,6 +39,41 @@ public class ModelComponent extends Component {
         public int emissiveTex = -1;
         public int heightTex = -1;
         public int opacityTex = -1;
+        public boolean enabled = true;
+        private boolean scannedAlbedo = false;
+        private boolean albedoTransparent = false;
+        public int alphaMaskTex = -1;
+        public float alphaMaskThreshold = 0.5f;
+        public boolean alphaCutout = false;
+
+        public boolean isMasked() {return alphaMaskTex != -1 || alphaCutout;}
+
+        public boolean isTransparent() {
+            if (isMasked()) return false;
+            if (scannedAlbedo || albedoTex == -1) return opacity < 1.0f || opacityTex != -1 || albedoTransparent;
+            int prevActiveUnit = glGetInteger(GL_ACTIVE_TEXTURE);
+            glActiveTexture(GL_TEXTURE0);
+            int prevBound = glGetInteger(GL_TEXTURE_BINDING_2D);
+            glBindTexture(GL_TEXTURE_2D, albedoTex);
+
+            int alphaSize = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_ALPHA_SIZE);
+            if (alphaSize > 0) {
+                int width = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH);
+                int height = glGetTexLevelParameteri(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT);
+                ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                for (int i = 3; i < pixels.limit(); i += 4) {
+                    if ((pixels.get(i) & 0xFF) < 255) {
+                        albedoTransparent = true;
+                        break;
+                    }
+                }
+            }
+            glBindTexture(GL_TEXTURE_2D, prevBound);
+            glActiveTexture(prevActiveUnit);
+            scannedAlbedo = true;
+            return opacity < 1.0f || opacityTex != -1 || albedoTransparent;
+        }
 
         @Override
         public String toString() {
@@ -50,13 +92,17 @@ public class ModelComponent extends Component {
                     "  emissiveTex = " + emissiveTex + ",\n" +
                     "  heightTex = " + heightTex + ",\n" +
                     "  opacityTex = " + opacityTex + "\n" +
+                    "  alphaMaskTex = " + alphaMaskTex + ",\n" +
+                    "  alphaMaskThreshold = " + alphaMaskThreshold + ",\n" +
+                    "  alphaCutout = " + alphaCutout + "\n" +
                     "}";
         }
     }
 
+
     public ModelComponent(float[] verticies, float[] normals, float[] uvs, int[] indices) {
-       this.indexCount = indices.length;
-       this.vertices = verticies;
+        this.indexCount = indices.length;
+        this.vertices = verticies;
 
         vao = glGenVertexArrays();
         glBindVertexArray(vao);
@@ -83,6 +129,12 @@ public class ModelComponent extends Component {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
         glBindVertexArray(0);
+        float maxDistSq = 0;
+        for (int i = 0; i<vertices.length; i+=3) {
+            float d = verticies[i]*verticies[i] + verticies[i+1]*verticies[i+1] + verticies[i+2]*verticies[i+2];
+            if (d > maxDistSq) maxDistSq = d;
+        }
+        boundingRadius = (float) Math.sqrt(maxDistSq);
 
     }
 
@@ -98,7 +150,7 @@ public class ModelComponent extends Component {
     protected void onObjectAttach() {}
 
     @Override
-    protected void onObjectDetach() {}
+    protected void onObjectDetach() {cleanup();}
 
     @Override
     protected void onUpdate() {

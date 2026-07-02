@@ -3,8 +3,10 @@ package org.sharkk2.sengine.core.classes;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
+import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 public class GameObject {
     private final Engine engine;
@@ -13,6 +15,7 @@ public class GameObject {
     private String name = "GameObject";
     public Transform transform = new Transform();
     public GameObject parent;
+    public Renderer.RenderMethod renderMethod = Renderer.RenderMethod.RENDER_DEFERRED;
     public List<GameObject> children = new ArrayList<>();
 
     public GameObject(Engine engine) {
@@ -21,6 +24,8 @@ public class GameObject {
 
     public void addChild(GameObject child) {
         child.parent = this;
+        child.renderMethod = renderMethod;
+
         children.add(child);
     }
 
@@ -49,7 +54,9 @@ public class GameObject {
         public void setPosition(Vector3f pos) {this.x = pos.x; this.y = pos.y; this.z = pos.z;}
         public void setScale(float w, float h, float d) {this.width = w; this.height = h; this.depth = d;}
         public void setScale(Vector3f scale) {this.width = scale.x; this.height = scale.y; this.depth = scale.z;}
-
+        public void setScale(float v) {this.width = v; this.height = v; this.depth =v;}
+        public void setRotation(float p, float y, float r) {this.pitch = p; this.yaw = y; this.roll = r;}
+        public void setRotation(Vector3f rot) {this.pitch = rot.x; this.yaw = rot.y; this.roll = rot.z;}
         public Matrix4f calculateWorldMatrix() {
             Matrix4f local = new Matrix4f()
                     .translate(x, y, z)
@@ -86,6 +93,18 @@ public class GameObject {
         components.forEach((aClass, component) -> component.onDetach());
         components.clear();
         children.clear();
+    }
+
+    public void cascade(Consumer<GameObject> action) {
+        action.accept(this);
+        for (GameObject child : children) child.cascade(action);
+    }
+
+    public <T extends Component> void cascade(Class<T> type, Consumer<T> action) {
+        cascade(go -> {
+            T comp = go.getComponent(type);
+            if (comp != null) action.accept(comp);
+        });
     }
 
 }

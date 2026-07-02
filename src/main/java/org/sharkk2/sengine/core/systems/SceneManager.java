@@ -2,6 +2,7 @@ package org.sharkk2.sengine.core.systems;
 
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.systems.components.CameraComponent;
 
 import java.util.*;
 
@@ -17,6 +18,14 @@ public class SceneManager {
         if (activeScene != null) {activeScene.destroy();}
         activeScene = scene;
         activeScene.load();
+        if (!activeScene.spawnPoints.isEmpty() && engine.getCameraService().getPrimaryCamera() != null) {
+            CameraComponent cam = engine.getCameraService().getPrimaryCamera();
+            if (cam.getOwner() != null) {
+                Random random = new Random();
+                int loc = random.nextInt(activeScene.spawnPoints.size());
+                cam.getOwner().transform.setPosition(activeScene.spawnPoints.get(loc));
+            }
+        }
         if (!scenes.containsKey(scene.id)) scenes.put(scene.id, scene);
     }
 

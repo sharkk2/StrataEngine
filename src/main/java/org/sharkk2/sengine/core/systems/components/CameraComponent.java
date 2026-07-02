@@ -4,6 +4,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.core.classes.Component;
+import org.sharkk2.sengine.core.classes.GameObject;
 
 public class CameraComponent extends Component {
     private float fov = 60f;
@@ -48,6 +49,35 @@ public class CameraComponent extends Component {
         owner.transform.pitch = pitch;
         owner.transform.yaw = yaw;
         calculateDirection();
+    }
+
+
+    public boolean inFrustum(GameObject object, float aspectRatio, float radius) {
+        Matrix4f proj = new Matrix4f();
+        Matrix4f view = new Matrix4f();
+        getProjectionMatrix(proj, aspectRatio);
+        getViewMatrix(view);
+        Matrix4f vp = proj.mul(view);
+
+        float[][] planes = {
+                { vp.m03() + vp.m00(), vp.m13() + vp.m10(), vp.m23() + vp.m20(), vp.m33() + vp.m30() }, // left
+                { vp.m03() - vp.m00(), vp.m13() - vp.m10(), vp.m23() - vp.m20(), vp.m33() - vp.m30() }, // right
+                { vp.m03() + vp.m01(), vp.m13() + vp.m11(), vp.m23() + vp.m21(), vp.m33() + vp.m31() }, // bottom
+                { vp.m03() - vp.m01(), vp.m13() - vp.m11(), vp.m23() - vp.m21(), vp.m33() - vp.m31() }, // top
+                { vp.m03() + vp.m02(), vp.m13() + vp.m12(), vp.m23() + vp.m22(), vp.m33() + vp.m32() }, // near
+                { vp.m03() - vp.m02(), vp.m13() - vp.m12(), vp.m23() - vp.m22(), vp.m33() - vp.m32() }, // far
+        };
+
+        Matrix4f world = object.transform.calculateWorldMatrix();
+        float wx = world.m30(), wy = world.m31(), wz = world.m32();
+        float maxScale = Math.max(object.transform.width, Math.max(object.transform.height, object.transform.depth));
+        float r = radius * maxScale;
+
+        for (float[] p : planes) {
+            float len = (float) Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
+            if ((p[0]*wx + p[1]*wy + p[2]*wz + p[3]) / len < -r) return false;
+        }
+        return true;
     }
 
 

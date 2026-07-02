@@ -1,10 +1,11 @@
-package org.sharkk2.sengine.core.systems;
+package org.sharkk2.sengine.core.systems.renderer;
 
 
-import org.joml.Vector2f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.exceptions.FrameBufferException;
 
+import static org.lwjgl.glfw.GLFW.glfwGetTime;
 import static org.lwjgl.opengl.GL43.*;
 
 public class PostProcessor {
@@ -49,7 +50,7 @@ public class PostProcessor {
 
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             Logger.error("Failed to init postprocessor framebuffer");
-            throw new RuntimeException("PostProcessor FBO not complete D:");
+            throw new FrameBufferException("PostProcessor FBO not complete D:");
 
         }
 
@@ -95,6 +96,7 @@ public class PostProcessor {
         shader.setFloat("saturation", engine.getValue("saturation"));
         shader.setFloat("gamma", engine.getValue("gamma"));
         shader.setInt("useHDR", engine.getIO("hdr") ? 1:0);
+        shader.setFloat("time", (float)glfwGetTime());
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, colorTexture);
@@ -148,4 +150,5 @@ public class PostProcessor {
 
     public int getColorTexture() {return colorTexture;}
     public int getQuadVAO() {return quadVAO;}
+    public int getFBO() {return fbo;}
 }

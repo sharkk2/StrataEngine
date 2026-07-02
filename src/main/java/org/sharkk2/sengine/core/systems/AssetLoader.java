@@ -25,6 +25,7 @@ import static org.lwjgl.stb.STBImage.*;
 
 
 import org.joml.Quaternionf;
+import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import javax.imageio.ImageIO;
 
@@ -34,7 +35,7 @@ public class AssetLoader {
     private final Engine engine;
     private final Map<String, Integer> textureCache = new HashMap<>();
     private final Map<String, CachedModel> modelCache = new HashMap<>();
-    public Primatives primatives = new Primatives();
+    public Primitives primitives = new Primitives();
 
     public AssetLoader(Engine engine) {
         this.engine = engine;
@@ -77,7 +78,7 @@ public class AssetLoader {
         boolean flipUVs = ext.equals(".gltf") || ext.equals(".glb");
 
         CachedModel cachedModel = new CachedModel(new CachedNode(), directory, flipUVs);
-        processNode(aiScene.mRootNode(), aiScene, cachedModel.root, directory, flipUVs);
+        processNode(aiScene.mRootNode(), aiScene, cachedModel.root, directory, flipUVs, id);
 
         aiReleaseImport(aiScene);
         modelCache.put(id, cachedModel);
@@ -92,6 +93,7 @@ public class AssetLoader {
         }
         return buildGameObject(cachedModel.root);
     }
+
 
     private GameObject buildGameObject(CachedNode node) {
         GameObject go = new GameObject(engine);
@@ -132,7 +134,7 @@ public class AssetLoader {
     }
 
 
-    private void processNode(AINode aiNode, AIScene aiScene, CachedNode outNode, String directory, boolean flipUVs) {
+    private void processNode(AINode aiNode, AIScene aiScene, CachedNode outNode, String directory, boolean flipUVs, String id) {
         outNode.name = aiNode.mName().dataString();
 
         AIMatrix4x4 t = aiNode.mTransformation();
@@ -147,7 +149,7 @@ public class AssetLoader {
             IntBuffer meshIndices = aiNode.mMeshes();
             for (int i = 0; i < aiNode.mNumMeshes(); i++) {
                 AIMesh aiMesh = AIMesh.create(aiScene.mMeshes().get(meshIndices.get(i)));
-                outNode.meshes.add(processMesh(aiMesh, aiScene, directory, flipUVs));
+                outNode.meshes.add(processMesh(aiMesh, aiScene, directory, flipUVs, id));
             }
         }
 
@@ -155,12 +157,12 @@ public class AssetLoader {
             for (int i = 0; i < aiNode.mNumChildren(); i++) {
                 CachedNode childNode = new CachedNode();
                 outNode.children.add(childNode);
-                processNode(AINode.create(aiNode.mChildren().get(i)), aiScene, childNode, directory, flipUVs);
+                processNode(AINode.create(aiNode.mChildren().get(i)), aiScene, childNode, directory, flipUVs, id);
             }
         }
     }
 
-    private CachedMesh processMesh(AIMesh aiMesh, AIScene aiScene, String directory, boolean flipUVs) {
+    private CachedMesh processMesh(AIMesh aiMesh, AIScene aiScene, String directory, boolean flipUVs, String id) {
         CachedMesh mesh = new CachedMesh();
         int vertexCount = aiMesh.mNumVertices();
 
@@ -207,25 +209,25 @@ public class AssetLoader {
         if (matIndex >= 0 && aiScene.mMaterials() != null) {
             AIMaterial aiMaterial = AIMaterial.create(aiScene.mMaterials().get(matIndex));
 
-            mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_BASE_COLOR, aiScene, directory);
-            if (mesh.material.albedoTex == -1) mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE, aiScene, directory);
+            mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_BASE_COLOR, aiScene, directory, id);
+            if (mesh.material.albedoTex == -1) mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE, aiScene, directory, id);
 
-            mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_NORMALS, aiScene, directory);
-            if (mesh.material.normalTex == -1) mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_HEIGHT, aiScene, directory); // map_Bump fallback
-            mesh.material.roughnessTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE_ROUGHNESS, aiScene, directory);
-            mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_METALNESS, aiScene, directory);
-            if (mesh.material.metalnessTex == -1) mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_SPECULAR, aiScene, directory);
-            mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT_OCCLUSION, aiScene, directory);
+            mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_NORMALS, aiScene, directory, id);
+            if (mesh.material.normalTex == -1) mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_HEIGHT, aiScene, directory, id); // map_Bump fallback
+            mesh.material.roughnessTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE_ROUGHNESS, aiScene, directory, id);
+            mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_METALNESS, aiScene, directory, id);
+            if (mesh.material.metalnessTex == -1) mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_SPECULAR, aiScene, directory, id);
+            mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT_OCCLUSION, aiScene, directory, id);
             if (mesh.material.aoTex == -1) {
-                mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_LIGHTMAP, aiScene, directory);
+                mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_LIGHTMAP, aiScene, directory, id);
                 if (mesh.material.aoTex == -1) {
-                    mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT, aiScene, directory);
+                    mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT, aiScene, directory, id);
                 }
             }
 
 
-            mesh.material.emissiveTex = loadMaterialTexture(aiMaterial, aiTextureType_EMISSIVE, aiScene, directory);
-            mesh.material.opacityTex = loadMaterialTexture(aiMaterial, aiTextureType_OPACITY, aiScene, directory);
+            mesh.material.emissiveTex = loadMaterialTexture(aiMaterial, aiTextureType_EMISSIVE, aiScene, directory, id);
+            mesh.material.opacityTex = loadMaterialTexture(aiMaterial, aiTextureType_OPACITY, aiScene, directory, id);
 
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 AIColor4D color = AIColor4D.malloc(stack);
@@ -248,13 +250,30 @@ public class AssetLoader {
                 if (aiGetMaterialFloatArray(aiMaterial, AI_MATKEY_OPACITY, aiTextureType_NONE, 0, floatOut, maxOut) == aiReturn_SUCCESS) {
                     mesh.material.opacity = floatOut.get(0);
                 }
+
+
+                AIString alphaModeStr = AIString.calloc();
+                if (aiGetMaterialString(aiMaterial, "$mat.gltf.alphaMode", aiTextureType_NONE, 0, alphaModeStr) == aiReturn_SUCCESS
+                        && "MASK".equals(alphaModeStr.dataString())) {
+                    mesh.material.alphaCutout = true;
+                    maxOut.put(0, 1);
+                    if (aiGetMaterialFloatArray(aiMaterial, "$mat.gltf.alphaCutoff", aiTextureType_NONE, 0, floatOut, maxOut) == aiReturn_SUCCESS) {
+                        mesh.material.alphaMaskThreshold = floatOut.get(0);
+                    }
+                }
+
+                alphaModeStr.free();
+                if (mesh.material.alphaCutout && mesh.material.opacityTex != -1) {
+                    mesh.material.alphaMaskTex = mesh.material.opacityTex;
+                    mesh.material.opacityTex = -1;
+                }
             }
         }
 
         return mesh;
     }
 
-    private int loadMaterialTexture(AIMaterial material, int texType, AIScene aiScene, String directory) {
+    private int loadMaterialTexture(AIMaterial material, int texType, AIScene aiScene, String directory, String modelid) {
         if (aiGetMaterialTextureCount(material, texType) <= 0) return -1;
 
         AIString aiPath = AIString.calloc();
@@ -269,14 +288,14 @@ public class AssetLoader {
 
         if (relativePath.startsWith("*")) {
             int texIndex = Integer.parseInt(relativePath.substring(1));
-            String cacheKey = aiScene.address() + "__embedded__" + texIndex;
+            String cacheKey = modelid + "__embedded__" + texIndex;
 
             if (textureCache.containsKey(cacheKey)) return textureCache.get(cacheKey);
 
             int[] w = new int[1], h = new int[1];
             ByteBuffer pixels = extractEmbeddedPixels(aiScene, texIndex, w, h);
             if (pixels != null) {
-                int glId = uploadPixels(pixels, w[0], h[0]);
+                int glId = uploadPixels(pixels, w[0], h[0],true);
                 textureCache.put(cacheKey, glId);
                 return glId;
             }
@@ -286,7 +305,7 @@ public class AssetLoader {
         String fullPath = (directory + relativePath).replace('\\', '/');
         if (textureCache.containsKey(fullPath)) return textureCache.get(fullPath);
 
-        int glId = loadTexture(fullPath);
+        int glId = loadTexture(fullPath, true);
         if (glId != -1) textureCache.put(fullPath, glId);
 
         return glId;
@@ -313,30 +332,93 @@ public class AssetLoader {
         }
     }
 
-    private int uploadPixels(ByteBuffer data, int width, int height) {
+    private int uploadPixels(ByteBuffer data, int width, int height, boolean blended) {
         int id = glGenTextures();
         glBindTexture(GL_TEXTURE_2D, id);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        if (blended) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        } else {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        }
         glBindTexture(GL_TEXTURE_2D, 0);
         return id;
     }
 
+
     public int loadTexture(String path) {
         int[] width = new int[1], height = new int[1], channels = new int[1];
-        stbi_set_flip_vertically_on_load(false);
+        stbi_set_flip_vertically_on_load(true);
         ByteBuffer image = stbi_load(path, width, height, channels, 4);
         if (image == null) {
             Logger.error("Could not load texture '" + path + "': " + stbi_failure_reason());
             return -1;
         }
 
-        int id = uploadPixels(image, width[0], height[0]);
+        int id = uploadPixels(image, width[0], height[0], true);
         stbi_image_free(image);
+        return id;
+    }
+
+    public int loadTexture(String path, boolean flipped) {
+        int[] width = new int[1], height = new int[1], channels = new int[1];
+        stbi_set_flip_vertically_on_load(!flipped);
+        ByteBuffer image = stbi_load(path, width, height, channels, 4);
+        if (image == null) {
+            Logger.error("Could not load texture '" + path + "': " + stbi_failure_reason());
+            return -1;
+        }
+
+        int id = uploadPixels(image, width[0], height[0], true);
+        stbi_image_free(image);
+        return id;
+    }
+
+    public int loadTexture(String path, boolean flipped, boolean blended) {
+        int[] width = new int[1], height = new int[1], channels = new int[1];
+        stbi_set_flip_vertically_on_load(!flipped);
+        ByteBuffer image = stbi_load(path, width, height, channels, 4);
+        if (image == null) {
+            Logger.error("Could not load texture '" + path + "': " + stbi_failure_reason());
+            return -1;
+        }
+
+        int id = uploadPixels(image, width[0], height[0], blended);
+        stbi_image_free(image);
+        return id;
+    }
+
+
+    public int loadEmptyTexture(int width, int height) {
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return id;
+    }
+
+    public int loadEmptyDepthTexture(int width, int height) {
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, id);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, (ByteBuffer) null);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
         return id;
     }
 
@@ -392,7 +474,7 @@ public class AssetLoader {
     }
 
 
-    public class Primatives {
+    public class Primitives {
         public ModelComponent cube() {
             float[] vertices = {
                     -0.5f, -0.5f,  0.5f,
@@ -422,11 +504,11 @@ public class AssetLoader {
             };
 
             float[] normals = {
-                    0, 0, 1,  0, 0, 1,  0, 0, 1,  0, 0, 1,
+                    0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,
                     0, 0, -1,  0, 0, -1,  0, 0, -1,  0, 0, -1,
                     -1, 0, 0,  -1, 0, 0,  -1, 0, 0,  -1, 0, 0,
-                    1, 0, 0,  1, 0, 0,  1, 0, 0,  1, 0, 0,
-                    0, 1, 0,  0, 1, 0,  0, 1, 0,  0, 1, 0,
+                    1, 0, 0,   1, 0, 0,   1, 0, 0,   1, 0, 0,
+                    0, 1, 0,   0, 1, 0,   0, 1, 0,   0, 1, 0,
                     0, -1, 0,  0, -1, 0,  0, -1, 0,  0, -1, 0,
             };
 
@@ -440,19 +522,19 @@ public class AssetLoader {
             };
 
             int[] indices = {
-                    0, 1, 2, 2, 3, 0,       // Front
-                    4, 5, 6, 6, 7, 4,        // Back
-                    8, 9, 10, 10, 11, 8,     // Left
-                    12, 13, 14, 14, 15, 12,  // Right
-                    16, 17, 18, 18, 19, 16,  // Top
-                    20, 21, 22, 22, 23, 20,  // Bottom
+                    0, 1, 2,    2, 3, 0,      // Front
+                    4, 5, 6,    6, 7, 4,      // Back
+                    8, 9, 10,   10, 11, 8,    // Left
+                    12, 13, 14, 14, 15, 12,   // Right
+                    16, 17, 18, 18, 19, 16,   // Top
+                    20, 21, 22, 22, 23, 20,   // Bottom
             };
 
             return new ModelComponent(vertices, normals, uvs, indices);
         }
 
         public ModelComponent triangle() {
-            float[] vertices = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0, 0.5f, 0,};
+            float[] vertices = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0, 0.5f, 0};
 
             float[] normals = {
                     0, 0, 1,
@@ -460,7 +542,7 @@ public class AssetLoader {
                     0, 0, 1,
             };
 
-            float[] uvs = {0, 0, 1, 0, 0.5f, 1,};
+            float[] uvs = {0, 0, 1, 0, 0.5f, 1};
             int[] indices = {0, 1, 2};
             return new ModelComponent(vertices, normals, uvs, indices);
         }
@@ -475,8 +557,8 @@ public class AssetLoader {
                     0, 0, 1,
             };
 
-            float[] uvs = {0, 0, 1, 0, 1, 1, 0, 1,};
-            int[] indices = { 0, 1, 2,  2, 3, 0 };
+            float[] uvs = {0, 0, 1, 0, 1, 1, 0, 1};
+            int[] indices = {0, 1, 2, 2, 3, 0};
             return new ModelComponent(vertices, normals, uvs, indices);
         }
 
@@ -486,6 +568,7 @@ public class AssetLoader {
             float[] normals = new float[vCount * 3];
             float[] uvs = new float[vCount * 2];
             int[] indices = new int[stacks * slices * 6];
+
             for (int stack = 0; stack <= stacks; stack++) {
                 float phi = (float) (Math.PI * stack / stacks);
                 float sinPhi = (float) Math.sin(phi);
@@ -553,13 +636,23 @@ public class AssetLoader {
                 int bot = i;
                 int top = i + ringVerts;
 
-                vertices[bot * 3] = x;  vertices[bot * 3 + 1] = -0.5f;  vertices[bot * 3 + 2] = z;
-                normals[bot * 3] = nx;  normals[bot * 3 + 1] = 0;        normals[bot * 3 + 2] = nz;
-                uvs[bot * 2] = u;       uvs[bot * 2 + 1] = 0;
+                vertices[bot * 3] = x;
+                vertices[bot * 3 + 1] = -0.5f;
+                vertices[bot * 3 + 2] = z;
+                normals[bot * 3] = nx;
+                normals[bot * 3 + 1] = 0;
+                normals[bot * 3 + 2] = nz;
+                uvs[bot * 2] = u;
+                uvs[bot * 2 + 1] = 0;
 
-                vertices[top * 3] = x;  vertices[top * 3 + 1] = 0.5f;  vertices[top * 3 + 2] = z;
-                normals[top * 3] = nx;  normals[top * 3 + 1] = 0;       normals[top * 3 + 2] = nz;
-                uvs[top * 2] = u;       uvs[top * 2 + 1] = 1;
+                vertices[top * 3] = x;
+                vertices[top * 3 + 1] = 0.5f;
+                vertices[top * 3 + 2] = z;
+                normals[top * 3] = nx;
+                normals[top * 3 + 1] = 0;
+                normals[top * 3 + 2] = nz;
+                uvs[top * 2] = u;
+                uvs[top * 2 + 1] = 1;
             }
 
             int sideIndexCount = slices * 6;
@@ -588,10 +681,14 @@ public class AssetLoader {
                     int centerIdx = base + cap * (slices + 1);
                     int fanBase = centerIdx + 1;
 
-                    // Center vertex
-                    vertices[centerIdx * 3] = 0;   vertices[centerIdx * 3 + 1] = y;  vertices[centerIdx * 3 + 2] = 0;
-                    normals[centerIdx * 3] = 0;    normals[centerIdx * 3 + 1] = ny; normals[centerIdx * 3 + 2] = 0;
-                    uvs[centerIdx * 2] = 0.5f;     uvs[centerIdx * 2 + 1] = 0.5f;
+                    vertices[centerIdx * 3] = 0;
+                    vertices[centerIdx * 3 + 1] = y;
+                    vertices[centerIdx * 3 + 2] = 0;
+                    normals[centerIdx * 3] = 0;
+                    normals[centerIdx * 3 + 1] = ny;
+                    normals[centerIdx * 3 + 2] = 0;
+                    uvs[centerIdx * 2] = 0.5f;
+                    uvs[centerIdx * 2 + 1] = 0.5f;
 
                     for (int i = 0; i < slices; i++) {
                         float theta = (float) (2 * Math.PI * i / slices);
@@ -624,5 +721,373 @@ public class AssetLoader {
 
             return new ModelComponent(vertices, normals, uvs, indices);
         }
+
+
+        public ModelComponent cone(int slices, boolean capped) {
+            int sideVerts = (slices + 1) * 2; // bottom ring + apex ring (one apex per slice for correct normals)
+            int capVerts = capped ? slices + 1 : 0;
+            float[] vertices = new float[(sideVerts + capVerts) * 3];
+            float[] normals = new float[(sideVerts + capVerts) * 3];
+            float[] uvs = new float[(sideVerts + capVerts) * 2];
+
+            float normalY = 0.5f;
+            float normalLen = (float) Math.sqrt(1.0f + normalY * normalY); // sqrt(cos²+sin²+0.5²) simplifies per-slice
+
+            for (int i = 0; i <= slices; i++) {
+                float theta = (float) (2 * Math.PI * i / slices);
+                float cosT = (float) Math.cos(theta);
+                float sinT = (float) Math.sin(theta);
+                float u = (float) i / slices;
+
+                // Side: bottom ring vertex
+                int bot = i;
+                vertices[bot * 3] = cosT * 0.5f;
+                vertices[bot * 3 + 1] = -0.5f;
+                vertices[bot * 3 + 2] = sinT * 0.5f;
+                float nx = cosT / normalLen;
+                float nz = sinT / normalLen;
+                float ny = normalY / normalLen;
+                normals[bot * 3] = nx;
+                normals[bot * 3 + 1] = ny;
+                normals[bot * 3 + 2] = nz;
+                uvs[bot * 2] = u;
+                uvs[bot * 2 + 1] = 0;
+
+                int top = i + (slices + 1);
+                vertices[top * 3] = 0;
+                vertices[top * 3 + 1] = 0.5f;
+                vertices[top * 3 + 2] = 0;
+                normals[top * 3] = nx;
+                normals[top * 3 + 1] = ny;
+                normals[top * 3 + 2] = nz;
+                uvs[top * 2] = u + 0.5f / slices;
+                uvs[top * 2 + 1] = 1;
+            }
+
+            int sideIndexCount = slices * 3;
+            int capIndexCount = capped ? slices * 3 : 0;
+            int[] indices = new int[sideIndexCount + capIndexCount];
+            int idx = 0;
+
+            for (int i = 0; i < slices; i++) {
+                int bot = i;
+                int botNext = i + 1;
+                int top = i + (slices + 1);
+
+                indices[idx++] = bot;
+                indices[idx++] = botNext;
+                indices[idx++] = top;
+            }
+
+            if (capped) {
+                int base = sideVerts;
+                int centerIdx = base;
+
+                vertices[centerIdx * 3] = 0;
+                vertices[centerIdx * 3 + 1] = -0.5f;
+                vertices[centerIdx * 3 + 2] = 0;
+                normals[centerIdx * 3] = 0;
+                normals[centerIdx * 3 + 1] = -1;
+                normals[centerIdx * 3 + 2] = 0;
+                uvs[centerIdx * 2] = 0.5f;
+                uvs[centerIdx * 2 + 1] = 0.5f;
+
+                for (int i = 0; i < slices; i++) {
+                    float theta = (float) (2 * Math.PI * i / slices);
+                    int vi = base + 1 + i;
+
+                    vertices[vi * 3] = (float) Math.cos(theta) * 0.5f;
+                    vertices[vi * 3 + 1] = -0.5f;
+                    vertices[vi * 3 + 2] = (float) Math.sin(theta) * 0.5f;
+
+                    normals[vi * 3] = 0;
+                    normals[vi * 3 + 1] = -1;
+                    normals[vi * 3 + 2] = 0;
+
+                    uvs[vi * 2] = (float) Math.cos(theta) * 0.5f + 0.5f;
+                    uvs[vi * 2 + 1] = (float) Math.sin(theta) * 0.5f + 0.5f;
+
+                    int next = base + 1 + (i + 1) % slices;
+                    indices[idx++] = centerIdx;
+                    indices[idx++] = next;
+                    indices[idx++] = vi;
+                }
+            }
+
+            return new ModelComponent(vertices, normals, uvs, indices);
+        }
+
+        public ModelComponent plane(int divisions) {
+            int lineVerts = divisions + 1;
+            int vCount = lineVerts * lineVerts;
+            float[] vertices = new float[vCount * 3];
+            float[] normals = new float[vCount * 3];
+            float[] uvs = new float[vCount * 2];
+            for (int row = 0; row <= divisions; row++) {
+                float v = (float) row / divisions;
+                float z = v - 0.5f;
+                for (int col = 0; col <= divisions; col++) {
+                    float u = (float) col / divisions;
+                    float x = u - 0.5f;
+                    int i = row * lineVerts + col;
+
+                    vertices[i * 3] = x;
+                    vertices[i * 3 + 1] = 0;
+                    vertices[i * 3 + 2] = z;
+
+                    normals[i * 3] = 0;
+                    normals[i * 3 + 1] = 1;
+                    normals[i * 3 + 2] = 0;
+
+                    uvs[i * 2] = u;
+                    uvs[i * 2 + 1] = v;
+                }
+            }
+
+            int horizontalSegments = divisions * lineVerts;
+            int verticalSegments = divisions * lineVerts;
+            int[] indices = new int[(horizontalSegments + verticalSegments) * 2];
+            int idx = 0;
+
+            for (int row = 0; row < lineVerts; row++) {
+                for (int col = 0; col < divisions; col++) {
+                    int start = row * lineVerts + col;
+                    indices[idx++] = start;
+                    indices[idx++] = start + 1;
+                }
+            }
+
+            for (int col = 0; col < lineVerts; col++) {
+                for (int row = 0; row < divisions; row++) {
+                    int start = row * lineVerts + col;
+                    indices[idx++] = start;
+                    indices[idx++] = start + lineVerts;
+                }
+            }
+            ModelComponent mc = new ModelComponent(vertices, normals, uvs, indices);
+            mc.drawMode = Renderer.DrawMode.LINES;
+            return mc;
+        }
+
+        public ModelComponent torus(float majorRadius, float minorRadius, int majorSegments, int minorSegments) {
+            int vCount = (majorSegments + 1) * (minorSegments + 1);
+            float[] vertices = new float[vCount * 3];
+            float[] normals = new float[vCount * 3];
+            float[] uvs = new float[vCount * 2];
+            int[] indices = new int[majorSegments * minorSegments * 6];
+
+            for (int maj = 0; maj <= majorSegments; maj++) {
+                float u = (float) maj / majorSegments;
+                float phi = (float) (2 * Math.PI * maj / majorSegments);
+                float cosPhi = (float) Math.cos(phi);
+                float sinPhi = (float) Math.sin(phi);
+
+                for (int min = 0; min <= minorSegments; min++) {
+                    float v = (float) min / minorSegments;
+                    float theta = (float) (2 * Math.PI * min / minorSegments);
+                    float cosTheta = (float) Math.cos(theta);
+                    float sinTheta = (float) Math.sin(theta);
+
+                    // Centre of the tube at this major angle
+                    float cx = majorRadius * cosPhi;
+                    float cz = majorRadius * sinPhi;
+
+                    float nx = cosPhi * cosTheta;
+                    float ny = sinTheta;
+                    float nz = sinPhi * cosTheta;
+
+                    int i = maj * (minorSegments + 1) + min;
+
+                    vertices[i * 3] = cx + minorRadius * nx;
+                    vertices[i * 3 + 1] = minorRadius * ny;
+                    vertices[i * 3 + 2] = cz + minorRadius * nz;
+
+                    normals[i * 3] = nx;
+                    normals[i * 3 + 1] = ny;
+                    normals[i * 3 + 2] = nz;
+
+                    uvs[i * 2] = u;
+                    uvs[i * 2 + 1] = v;
+                }
+            }
+
+            int idx = 0;
+            for (int maj = 0; maj < majorSegments; maj++) {
+                for (int min = 0; min < minorSegments; min++) {
+                    int tl = maj * (minorSegments + 1) + min;
+                    int tr = tl + 1;
+                    int bl = tl + (minorSegments + 1);
+                    int br = bl + 1;
+
+                    indices[idx++] = tl;
+                    indices[idx++] = bl;
+                    indices[idx++] = tr;
+                    indices[idx++] = tr;
+                    indices[idx++] = bl;
+                    indices[idx++] = br;
+                }
+            }
+
+            return new ModelComponent(vertices, normals, uvs, indices);
+        }
+
+        // Capsule: cylinder body with hemispherical caps.
+        // radius: radius of the body and caps.
+        // height: total height including both caps (minimum 2*radius).
+        // slices: radial segments. stacks: latitudinal segments per hemisphere.
+        public ModelComponent capsule(float radius, float height, int slices, int stacks) {
+            float bodyHeight = Math.max(0, height - 2 * radius);
+            float halfBody = bodyHeight * 0.5f;
+
+            // Vertices: top cap + body rings + bottom cap
+            // Top hemisphere: (stacks+1) rings of (slices+1) verts
+            // Bottom hemisphere: (stacks+1) rings of (slices+1) verts
+            // They share no rings so UVs are clean.
+            int ringsPerCap = stacks + 1;
+            int bodyRings = 2; // top and bottom edge of the cylindrical body
+            int totalRings = ringsPerCap * 2 + bodyRings;
+            int vCount = totalRings * (slices + 1);
+
+            float[] vertices = new float[vCount * 3];
+            float[] normals = new float[vCount * 3];
+            float[] uvs = new float[vCount * 2];
+
+            int ring = 0;
+
+            // Top hemisphere (apex at +halfBody+radius, opening downward)
+            for (int stack = 0; stack <= stacks; stack++) {
+                float phi = (float) (Math.PI * 0.5 * stack / stacks); // 0 at apex, PI/2 at equator
+                float sinPhi = (float) Math.sin(phi);
+                float cosPhi = (float) Math.cos(phi);
+                float ringY = halfBody + radius * cosPhi;
+                float v = (float) stack / (stacks * 2 + 1); // normalised over full height
+
+                for (int slice = 0; slice <= slices; slice++) {
+                    float theta = (float) (2 * Math.PI * slice / slices);
+                    float cosT = (float) Math.cos(theta);
+                    float sinT = (float) Math.sin(theta);
+
+                    int i = ring * (slices + 1) + slice;
+                    float nx = cosT * sinPhi;
+                    float ny = cosPhi;
+                    float nz = sinT * sinPhi;
+
+                    vertices[i * 3] = nx * radius;
+                    vertices[i * 3 + 1] = ringY;
+                    vertices[i * 3 + 2] = nz * radius;
+
+                    normals[i * 3] = nx;
+                    normals[i * 3 + 1] = ny;
+                    normals[i * 3 + 2] = nz;
+
+                    uvs[i * 2] = (float) slice / slices;
+                    uvs[i * 2 + 1] = 1 - v;
+                }
+                ring++;
+            }
+
+            // Body — top edge ring (y = +halfBody)
+            {
+                float v = (float) stacks / (stacks * 2 + 1);
+                for (int slice = 0; slice <= slices; slice++) {
+                    float theta = (float) (2 * Math.PI * slice / slices);
+                    float cosT = (float) Math.cos(theta);
+                    float sinT = (float) Math.sin(theta);
+
+                    int i = ring * (slices + 1) + slice;
+                    vertices[i * 3] = cosT * radius;
+                    vertices[i * 3 + 1] = halfBody;
+                    vertices[i * 3 + 2] = sinT * radius;
+
+                    normals[i * 3] = cosT;
+                    normals[i * 3 + 1] = 0;
+                    normals[i * 3 + 2] = sinT;
+
+                    uvs[i * 2] = (float) slice / slices;
+                    uvs[i * 2 + 1] = 1 - v;
+                }
+                ring++;
+            }
+
+            // Body — bottom edge ring (y = -halfBody)
+            {
+                float v = (float) (stacks + 1) / (stacks * 2 + 1);
+                for (int slice = 0; slice <= slices; slice++) {
+                    float theta = (float) (2 * Math.PI * slice / slices);
+                    float cosT = (float) Math.cos(theta);
+                    float sinT = (float) Math.sin(theta);
+
+                    int i = ring * (slices + 1) + slice;
+                    vertices[i * 3] = cosT * radius;
+                    vertices[i * 3 + 1] = -halfBody;
+                    vertices[i * 3 + 2] = sinT * radius;
+
+                    normals[i * 3] = cosT;
+                    normals[i * 3 + 1] = 0;
+                    normals[i * 3 + 2] = sinT;
+
+                    uvs[i * 2] = (float) slice / slices;
+                    uvs[i * 2 + 1] = 1 - v;
+                }
+                ring++;
+            }
+
+            // Bottom hemisphere (opening upward, nadir at -halfBody-radius)
+            for (int stack = 0; stack <= stacks; stack++) {
+                float phi = (float) (Math.PI * 0.5 * (stacks - stack) / stacks); // PI/2 at equator, 0 at nadir
+                float sinPhi = (float) Math.sin(phi);
+                float cosPhi = (float) Math.cos(phi);
+                float ringY = -halfBody - radius * cosPhi;
+                float v = (float) (stacks + 2 + stack) / (stacks * 2 + 1);
+
+                for (int slice = 0; slice <= slices; slice++) {
+                    float theta = (float) (2 * Math.PI * slice / slices);
+                    float cosT = (float) Math.cos(theta);
+                    float sinT = (float) Math.sin(theta);
+
+                    int i = ring * (slices + 1) + slice;
+                    float nx = cosT * sinPhi;
+                    float ny = -cosPhi;
+                    float nz = sinT * sinPhi;
+
+                    vertices[i * 3] = nx * radius;
+                    vertices[i * 3 + 1] = ringY;
+                    vertices[i * 3 + 2] = nz * radius;
+
+                    normals[i * 3] = nx;
+                    normals[i * 3 + 1] = ny;
+                    normals[i * 3 + 2] = nz;
+
+                    uvs[i * 2] = (float) slice / slices;
+                    uvs[i * 2 + 1] = 1 - v;
+                }
+                ring++;
+            }
+
+            // Indices — quad strips between consecutive rings
+            int totalRingsForQuads = totalRings - 1;
+            int[] indices = new int[totalRingsForQuads * slices * 6];
+            int idx = 0;
+
+            for (int r = 0; r < totalRings - 1; r++) {
+                for (int slice = 0; slice < slices; slice++) {
+                    int tl = r * (slices + 1) + slice;
+                    int tr = tl + 1;
+                    int bl = tl + (slices + 1);
+                    int br = bl + 1;
+
+                    indices[idx++] = tl;
+                    indices[idx++] = bl;
+                    indices[idx++] = tr;
+                    indices[idx++] = tr;
+                    indices[idx++] = bl;
+                    indices[idx++] = br;
+                }
+            }
+
+            return new ModelComponent(vertices, normals, uvs, indices);
+        }
     }
+
+
 }

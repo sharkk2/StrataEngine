@@ -1,11 +1,13 @@
 #version 430 core
 
 in vec2 vUV;
-in vec3 vWorldPos;
-in vec3 vNormal;
 
 out vec4 FragColor;
-
+uniform sampler2D gPosition;
+uniform sampler2D gNormal;
+uniform sampler2D gAlbedo;
+uniform sampler2D gMaterial;
+uniform sampler2D gEmissive;  // RGB16F emissive color, already multiplied by strength in the geometry pass
 
 uniform vec3 direction;
 uniform vec3 color;
@@ -16,46 +18,12 @@ uniform int globalShadowEnabled;
 uniform sampler2DShadow globalShadowTex;
 uniform mat4 globalLightSpaceMatrix;
 
-uniform sampler2D albedoTex;
-uniform vec3 albedo;
-
-uniform sampler2D metalnessTex;
-uniform float metalness;
-
-uniform sampler2D roughnessTex;
-uniform float roughness;
-
-uniform sampler2D normalTex;
-
-uniform sampler2D emissiveTex;
-uniform vec3 emissive;
-uniform float emissiveStrength;
-
-uniform sampler2D aoTex;
-uniform sampler2D opacityTex;
-uniform float opacity;
-uniform int isPackedORM;
-
-uniform sampler2D alphaMaskTex;
-uniform float alphaMaskThreshold;
-uniform int alphaCutout;
-
 uniform vec3 cameraPos;
 uniform vec3 skyColor;
-
-uniform int useAlbedoTex;
-uniform int useMetalnessTex;
-uniform int useRoughnessTex;
-uniform int useNormalTex;
-uniform int useEmissiveTex;
-uniform int useAoTex;
-uniform int useOpacityTex;
-uniform int useAlphaMaskTex;
 
 uniform sampler2D ssaoTex;
 uniform int ssaoEnabled;
 
-uniform int lightEnabled;
 #define MAX_LIGHTS 16
 
 struct Light {
@@ -123,6 +91,12 @@ layout(std140, binding = 1) uniform Fog {
     int fogMode;
 };
 
+layout(std140, binding = 0) uniform Camera {
+    mat4 projection;
+    mat4 view;
+    mat4 inverseView;
+};
+
 uniform int renderingMode;
 const float PI = 3.14159265359;
 
@@ -153,85 +127,41 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float rough) {
 }
 
 void main() {
-    vec4 mat_albedo = (useAlbedoTex == 1) ? texture(albedoTex, vUV): vec4(albedo, opacity);
-    mat_albedo.rgb = pow(mat_albedo.rgb, vec3(2.2));
-    float mat_metalness = metalness;
-    float mat_roughness = roughness;
-    float mat_ao = (useAoTex == 1) ? texture(aoTex, vUV).r : 1.0;
 
-    if (isPackedORM == 1) {
-        vec4 packedORM = texture(roughnessTex, vUV);
-        mat_ao = packedORM.r;
-        mat_roughness = packedORM.g;
-        mat_metalness = packedORM.b;
-    } else {
-        if (useMetalnessTex == 1) mat_metalness = texture(metalnessTex, vUV).r;
-        if (useRoughnessTex == 1) mat_roughness = texture(roughnessTex, vUV).r;
-    }
+    vec3 viewPos = texture(gPosition, vUV).rgb;
+    vec3 vWorldPos = (inverseView * vec4(viewPos, 1.0)).xyz;
+    vec3 vNormal = texture(gNormal, vUV).rgb;
 
-    mat_roughness = clamp(mat_roughness, 0.04, 1.0);
-    vec3 mat_emissive = (useEmissiveTex == 1)? pow(texture(emissiveTex, vUV).rgb, vec3(2.2)): emissive;
+    vec4 albedoSample = texture(gAlbedo, vUV);
+    vec3 mat_albedo = albedoSample.rgb;
+    float mat_opacity = albedoSample.a;
 
-    if (useOpacityTex == 1) {
-        mat_albedo.a = texture(opacityTex, vUV).r;
-    } else if (opacity != 1) {
-        mat_albedo.a = opacity;
-    }
+    vec4 materialSample = texture(gMaterial, vUV);
+    float mat_metalness = materialSample.r;
+    float mat_roughness = clamp(materialSample.g, 0.04, 1.0);
+    float mat_ao = materialSample.b;
+    float ssao = ssaoEnabled == 1 ? texture(ssaoTex, vUV).r : 1.0;
 
+    ssao = pow(ssao, 2.5);
+    float combinedAO = mat_ao * ssao;
+
+    vec3 mat_emissive = texture(gEmissive, vUV).rgb;
 
     switch (renderingMode) {
-        case 1: FragColor = mat_albedo; break;
-        case 2: FragColor = vec4(vec3(mat_metalness), 1); break;
-        case 3: FragColor = vec4(vec3(mat_roughness), 1); break;
-        case 4: {
-            if (useNormalTex == 1) {FragColor = vec4(texture(normalTex, vUV).rgb * 2.0 - 1.0, 1);} break;
-        }
-        case 5: FragColor = vec4(mat_emissive, 1); break;
-        case 6: FragColor = vec4(vec3(mat_ao), 1); break;
-        case 7: FragColor = vec4(vec3(mat_albedo.a), 1); break;
-    }
-    if (renderingMode != 0) return;
-    if (useAlphaMaskTex == 1) {
-        if (texture(alphaMaskTex, vUV).r < alphaMaskThreshold) discard;
-    } else if (alphaCutout == 1) {
-        if (mat_albedo.a < alphaMaskThreshold) discard;
-    } else {
-        if (mat_albedo.a < 0.1f) discard;
+        case 1: FragColor = vec4(mat_albedo, mat_opacity); return;
+        case 2: FragColor = vec4(vec3(mat_metalness), 1); return;
+        case 3: FragColor = vec4(vec3(mat_roughness), 1); return;
+        case 4: FragColor = vec4(normalize(vNormal) * 0.5 + 0.5, 1); return;
+        case 5: FragColor = vec4(mat_emissive, 1); return;
+        case 6: FragColor = vec4(vec3(combinedAO), 1); return;
+        case 7: FragColor = vec4(vec3(mat_opacity), 1); return;
     }
 
-    if (lightEnabled == 0) {
-        FragColor = mat_albedo;
-        return;
-    }
-
-    vec3 norm;
-    if (useNormalTex == 1) {
-        vec3 sampledNormal = texture(normalTex, vUV).rgb * 2.0 - 1.0;
-        if (renderingMode == 4) {
-            FragColor = vec4(sampledNormal, 1);
-            return;
-        }
-
-        vec3 N = normalize(vNormal);
-        vec3 dp1 = dFdx(vWorldPos);
-        vec3 dp2 = dFdy(vWorldPos);
-        vec2 duv1 = dFdx(vUV);
-        vec2 duv2 = dFdy(vUV);
-        float det = duv1.x * duv2.y - duv2.x * duv1.y;
-        float invDet = (abs(det) > 0.00001) ? 1.0 / det : 1.0;
-        vec3 T = normalize((dp1 * duv2.y - dp2 * duv1.y) * invDet);
-        T = normalize(T - dot(T, N) * N);
-        vec3 B = cross(N, T);
-        mat3 TBN = mat3(T, B, N);
-        norm = normalize(TBN * sampledNormal);
-    } else {
-        norm = normalize(vNormal);
-    }
-
+    vec3 norm = normalize(vNormal);
     vec3 V = normalize(cameraPos - vWorldPos);
     float NdotV = max(dot(norm, V), 0.0);
 
-    vec3 F0 = mix(vec3(0.04), mat_albedo.rgb, mat_metalness);
+    vec3 F0 = mix(vec3(0.04), mat_albedo, mat_metalness);
     vec3 Lo = vec3(0.0);
 
     if (enabled == 1) {
@@ -245,7 +175,7 @@ void main() {
 
         vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
         vec3 kD = (vec3(1.0) - F) * (1.0 - mat_metalness);
-        vec3 diffuse = kD * mat_albedo.rgb / PI;
+        vec3 diffuse = kD * mat_albedo / PI;
 
         float shadowFactor = 1.0;
         if (globalShadowEnabled == 1) {
@@ -281,7 +211,7 @@ void main() {
 
         vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
         vec3 kD = (vec3(1.0) - F) * (1.0 - mat_metalness);
-        vec3 diffuse = kD * mat_albedo.rgb / PI;
+        vec3 diffuse = kD * mat_albedo / PI;
 
         vec3 cookieColor = vec3(1.0);
         if (light.type == 1 && light.hasCookie == 1) {
@@ -304,17 +234,17 @@ void main() {
     vec3 F_ambient = fresnelSchlickRoughness(NdotV, F0, mat_roughness);
     vec3 kD_ambient = (vec3(1.0) - F_ambient) * (1.0 - mat_metalness);
     float ambientSpecularStrength = 1.0 / (mat_roughness * mat_roughness * 4.0 + 1.0);
-    vec3 ambientColor = (kD_ambient * mat_albedo.rgb + F_ambient * ambientSpecularStrength) * ambient * mat_ao;
-    vec3 emissiveColor = mat_emissive * emissiveStrength;
+    vec3 ambientColor = (kD_ambient * mat_albedo + F_ambient * ambientSpecularStrength) * ambient * combinedAO;
 
-    vec3 finalColor = Lo + ambientColor + emissiveColor;
+    vec3 finalColor = Lo + ambientColor + mat_emissive;
 
     if (fogEnabled == 1) {
         float fragDist = length(cameraPos - vWorldPos);
         float heightFactor = exp(-max(vWorldPos.y, 0.0) * 0.002);
 
         float fogFactor;
-        if (fogMode == 0) {fogFactor = clamp((fogEnd - fragDist) / (fogEnd - fogStart), 0.0, 1.0);
+        if (fogMode == 0) {
+            fogFactor = clamp((fogEnd - fragDist) / (fogEnd - fogStart), 0.0, 1.0);
         } else {
             float d = fogDensity * fragDist * heightFactor;
             fogFactor = exp(-d);
@@ -328,5 +258,5 @@ void main() {
         finalColor = mix(fogColor, finalColor, fogFactor);
     }
 
-    FragColor = vec4(finalColor, mat_albedo.a);
+    FragColor = vec4(finalColor, mat_opacity);
 }

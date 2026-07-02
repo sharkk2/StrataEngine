@@ -2,8 +2,11 @@ package org.sharkk2.sengine;
 
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLDebugMessageCallback;
+import org.sharkk2.sengine.core.classes.ShadowMap;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.*;
+import org.sharkk2.sengine.core.systems.renderer.Renderer;
+import org.sharkk2.sengine.core.systems.renderer.ShaderService;
 
 import java.nio.IntBuffer;
 import java.util.HashMap;
@@ -26,12 +29,14 @@ public class Engine {
     private float deltaTime;
     private long lastFrame = System.nanoTime();
     private int fps;
+    private int totalFrameCount = 0;
 
 
     public final HashMap<String, Boolean> ioConfig = new HashMap<>();
     public final HashMap<String, Float> valueConfig = new HashMap<>();
 
     private InputService inputService;
+    private Debugger debugger;
     private ShaderService shaderService;
     private CameraService cameraService;
     private AssetLoader assetLoader;
@@ -55,6 +60,7 @@ public class Engine {
     public int getFps() {return fps;}
     public void setWindowTitle(String title) {glfwSetWindowTitle(windowHandle, title);}
     public String getWindowTitle() {return glfwGetWindowTitle(windowHandle);}
+    public int getTotalFrameCount() {return totalFrameCount;}
 
     public InputService getInputService() {return inputService;}
     public ShaderService getShaderService() {return shaderService;}
@@ -63,11 +69,15 @@ public class Engine {
     public CameraService getCameraService() {return cameraService;}
     public SceneManager getSceneManager() {return sceneManager;}
     public ScriptService getScriptService() {return scriptService;}
+    public Debugger getDebugger() {return debugger;}
 
     public Engine() {
         ioConfig.put("debug", true);
         ioConfig.put("vsync", false);
         ioConfig.put("hdr", true);
+        ioConfig.put("ssao", true);
+        ioConfig.put("bloom", true);
+        ioConfig.put("frustumCulling", true);
         valueConfig.put("controls.mouse_sensitivity", 0.1f);
         valueConfig.put("controls.acceleration", 3.5f);
         valueConfig.put("controls.friction", 0.85f);
@@ -75,6 +85,9 @@ public class Engine {
         valueConfig.put("exposure", 1.3f);
         valueConfig.put("saturation", 1.6f);
         valueConfig.put("gamma", 2.2f);
+        valueConfig.put("shadows.quality", (float)ShadowMap.ShadowQuality.HIGH.ordinal()); // 0: HD, 1: 2K, 2: 4K
+        valueConfig.put("shadows.distance", 26f);
+        valueConfig.put("ssao_samples", 26f);
     }
 
     public void initialize(int windowWidth, int windowHeight, Long monitor) throws EngineInitException {
@@ -112,7 +125,6 @@ public class Engine {
                 }
             }, 0);
         }
-
         Logger.info("Loaded OpenGL "+ glGetString(GL_VERSION) + " (" + glGetString(GL_RENDERER) + ")");
         glViewport(0, 0, windowWidth, windowHeight);
         glfwSetFramebufferSizeCallback(windowHandle, (win, width, height) -> {
@@ -120,7 +132,7 @@ public class Engine {
             this.windowHeight = height;
             glViewport(0, 0, width, height);
             if (renderer != null) {
-                renderer.getPostProcessor().resize(width, height);
+                renderer.onResize(width, height);
             }
         });
 
@@ -130,7 +142,8 @@ public class Engine {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 
-        inputService = new InputService(this);
+        debugger = new Debugger(this);
+        inputService = new InputService(this); // init order must NOT be messed up
         shaderService = new ShaderService(this);
         cameraService = new CameraService(this);
         assetLoader = new AssetLoader(this);
@@ -149,6 +162,7 @@ public class Engine {
         Logger.info("Cleaning up");
         shaderService.destroyAll();
         renderer.getPostProcessor().destroy();
+        renderer.getGbuffer().destroy();
         sceneManager.destroy();
         onDestroy();
         Logger.info("Destroying window");
@@ -175,6 +189,7 @@ public class Engine {
             inputService.update();
             glfwSwapBuffers(windowHandle);
             framecount++;
+            totalFrameCount++;
             if ((System.currentTimeMillis() - lastSec) >= 1000) {
                 lastSec = System.currentTimeMillis();
                 fps = framecount;
