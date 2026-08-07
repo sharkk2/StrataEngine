@@ -10,6 +10,7 @@ public abstract class Component {
     protected abstract void onObjectAttach();
     protected abstract void onObjectDetach();
     protected abstract void onUpdate();
+    public abstract Component copy();
 
 
     public void onAttach(GameObject owner) {this.owner = owner; onObjectAttach();}

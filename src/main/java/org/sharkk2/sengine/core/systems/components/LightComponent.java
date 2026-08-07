@@ -16,7 +16,7 @@ public class LightComponent extends Component {
     public final LightType type;
     public final Vector3f offset = new Vector3f(0,0,0);
     public final Vector3f color = new Vector3f(1,1,1);
-    public final Vector3f spotLightDirection = new Vector3f(0, -1, 0);
+    public final Vector3f spotLightDirection = new Vector3f(0, 0, 0);
     public float intensity = 1.0f;
     public float range = 20.0f;
     public float constant = 1.0f;
@@ -68,5 +68,24 @@ public class LightComponent extends Component {
     @Override
     protected void onUpdate() {
 
+    }
+
+    @Override
+    public Component copy() {
+        LightComponent copy = new LightComponent(type);
+        copy.spotLightDirection.set(spotLightDirection);
+        copy.intensity = intensity;
+        copy.spotLightInnerCutoff = spotLightInnerCutoff;
+        copy.spotLightOuterCutoff = spotLightOuterCutoff;
+        copy.offset.set(offset);
+        copy.name = name + "_copy";
+        copy.range = range;
+        copy.color.set(color);
+        copy.lightCookieTex = lightCookieTex;
+        copy.castShadow = castShadow;
+        copy.constant = constant;
+        copy.linear = linear;
+        copy.quadratic = quadratic;
+        return copy;
     }
 }

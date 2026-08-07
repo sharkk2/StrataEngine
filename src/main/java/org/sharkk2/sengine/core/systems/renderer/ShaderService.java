@@ -1,6 +1,5 @@
 package org.sharkk2.sengine.core.systems.renderer;
 
-
 import org.joml.Matrix4fc;
 import org.joml.*;
 import org.lwjgl.system.MemoryStack;
@@ -28,6 +27,11 @@ public class ShaderService {
         return shaders.computeIfAbsent(key, k -> load(vertexPath, fragmentPath));
     }
 
+    public Shader getCompute(String computePath) {
+        String key = "compute|" + computePath;
+        return shaders.computeIfAbsent(key, k -> loadCompute(computePath));
+    }
+
     private Shader load(String vertexPath, String fragmentPath) {
         int vertex = compile(GL_VERTEX_SHADER, Helpers.readFile(vertexPath));
         int fragment = compile(GL_FRAGMENT_SHADER, Helpers.readFile(fragmentPath));
@@ -43,6 +47,20 @@ public class ShaderService {
         glDeleteShader(vertex);
         glDeleteShader(fragment);
         return new Shader(program, vertexPath, fragmentPath);
+    }
+
+    private Shader loadCompute(String computePath) {
+        int compute = compile(GL_COMPUTE_SHADER, Helpers.readFile(computePath));
+        int program = glCreateProgram();
+        glAttachShader(program, compute);
+        glLinkProgram(program);
+        if (glGetProgrami(program, GL_LINK_STATUS) == GL_FALSE) {
+            Logger.error("Compute shader link failed");
+            throw new ShaderLoadException("Failed to link compute shader! (" + computePath + ")");
+        }
+
+        glDeleteShader(compute);
+        return new Shader(program, computePath);
     }
 
     private int compile(int type, String src) {
@@ -64,17 +82,7 @@ public class ShaderService {
 
     public UBO getUBO(String name) {return ubos.get(name);}
 
-    /* example
-    UBO cameraUBO = shaderManager.createUBO("camera", 0, 128);
-    shaderManager.bindUniformBlock(myShader, "Camera", 0);
-      try (MemoryStack stack = MemoryStack.stackPush()) {
-        FloatBuffer buf = stack.mallocFloat(32);
-        projMatrix.get(0, buf);
-        viewMatrix.get(16, buf);
-        cameraUBO.upload(buf);
-    }
 
-     */
     public static class UBO {
         private final int id;
         private final int bindingPoint;
@@ -144,12 +152,16 @@ public class ShaderService {
         private final int id;
         private String vertPath;
         private String fragPath;
+        private String computePath;
+        private final boolean isCompute;
         private final Map<String, Integer> locationCache = new HashMap<>();
-        private Shader(int id) { this.id = id; }
-        private Shader(int id, String vertPath, String fragPath) { this.id = id; this.vertPath = vertPath; this.fragPath = fragPath;}
+        private Shader(int id) { this.id = id; this.isCompute = false; }
+        private Shader(int id, String vertPath, String fragPath) { this.id = id; this.vertPath = vertPath; this.fragPath = fragPath; this.isCompute = false; }
+        private Shader(int id, String computePath) { this.id = id; this.computePath = computePath; this.isCompute = true; }
 
         public void use() {glUseProgram(id); }
         public int getId() {return id; }
+        public boolean isCompute() {return isCompute; }
         public int loc(String name) {return locationCache.computeIfAbsent(name, n -> glGetUniformLocation(id, n));}
         public void setInt(String name, int v) {glUniform1i(loc(name), v); }
         public void setInt2(String name, int v1, int v2) {glUniform2i(loc(name), v1, v2); }
@@ -167,8 +179,21 @@ public class ShaderService {
         public void setVec2(String name, Vector2f v) {glUniform2f(loc(name), v.x, v.y);}
         public void setVec3(String name, Vector3f v) {glUniform3f(loc(name), v.x, v.y, v.z);}
         public void setVec4(String name, Vector4f v) {glUniform4f(loc(name), v.x, v.y, v.z, v.w);}
+
+        public void dispatch(int groupsX, int groupsY, int groupsZ) {
+            if (!isCompute) throw new IllegalStateException("dispatch() called on a non-compute shader (" + vertPath + " / " + fragPath + ")");
+            use();
+            glDispatchCompute(groupsX, groupsY, groupsZ);
+        }
+
+        public void dispatch(int groupsX, int groupsY, int groupsZ, int barrierBits) {
+            dispatch(groupsX, groupsY, groupsZ);
+            glMemoryBarrier(barrierBits);
+        }
+
         public String getVertPath() {return vertPath;}
         public String getFragPath() {return fragPath;}
+        public String getComputePath() {return computePath;}
         public void destroy() {glDeleteProgram(id); locationCache.clear();}
     }
 }

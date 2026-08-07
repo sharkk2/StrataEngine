@@ -7,10 +7,11 @@ in vec3 vNormal;
 out vec4 FragColor;
 
 
-uniform vec3 direction;
-uniform vec3 color;
+uniform vec3 dlDirection;
+uniform vec3 dlColor;
 uniform vec3 ambient;
-uniform int enabled;
+uniform int dlEnabled;
+uniform float dlIntensity;
 
 uniform int globalShadowEnabled;
 uniform sampler2DShadow globalShadowTex;
@@ -56,26 +57,32 @@ uniform sampler2D ssaoTex;
 uniform int ssaoEnabled;
 
 uniform int lightEnabled;
-#define MAX_LIGHTS 16
+#define MAX_COOKIE_LIGHTS 8
 
 struct Light {
-    int type;
     vec3 position;
-    vec3 color;
-    vec3 direction;
     float range;
+    vec3 color;
     float intensity;
+    vec3 direction;
     float constant;
     float linear;
     float quadratic;
     float innerCutOff;
     float outerCutOff;
+    int type;
     int hasCookie;
+    int cookieSlot;
+    int _pad0; // could be used for a castShadow??? maybe
 };
 
 uniform int lightCount;
-uniform Light lights[MAX_LIGHTS];
-uniform sampler2D cookieTextures[MAX_LIGHTS];
+
+layout(std430, binding = 2) readonly buffer LightBuffer {
+    Light lights[];
+};
+
+uniform sampler2D cookieTextures[MAX_COOKIE_LIGHTS];
 
 const vec2 poissonDisk[16] = vec2[](
 vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
@@ -116,12 +123,15 @@ float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lig
 }
 
 layout(std140, binding = 1) uniform Fog {
+    vec4 fogColor; // rgb used, fuck alpha
     float fogDensity;
     float fogStart;
     float fogEnd;
     int fogEnabled;
     int fogMode;
+    int blendSkyColor;
 };
+
 
 uniform int renderingMode;
 const float PI = 3.14159265359;
@@ -234,8 +244,8 @@ void main() {
     vec3 F0 = mix(vec3(0.04), mat_albedo.rgb, mat_metalness);
     vec3 Lo = vec3(0.0);
 
-    if (enabled == 1) {
-        vec3 L = normalize(-direction);
+    if (dlEnabled == 1) {
+        vec3 L = normalize(-dlDirection);
         vec3 H = normalize(V + L);
         float NdotL = max(dot(norm, L), 0.0);
 
@@ -253,7 +263,7 @@ void main() {
             shadowFactor = computeShadow(globalShadowTex, posLightSpace, norm, L);
         }
 
-        Lo += (diffuse + specular) * color * NdotL * 4 * shadowFactor;
+        Lo += (diffuse + specular) * dlColor * NdotL * dlIntensity * shadowFactor;
     }
 
     for (int i = 0; i < lightCount; i++) {
@@ -295,7 +305,7 @@ void main() {
             float scale = fwdDist * tanOuter;
 
             vec2 cookieUV = vec2(dot(toFrag, right), dot(toFrag, up)) / scale * 0.5 + 0.5;
-            cookieColor = texture(cookieTextures[i], cookieUV).rgb;
+            cookieColor = texture(cookieTextures[light.cookieSlot], cookieUV).rgb;
         }
 
         Lo += (diffuse + specular) * light.color * light.intensity * NdotL * attenuation * rangeFalloff * spotFactor * cookieColor;
@@ -311,21 +321,21 @@ void main() {
 
     if (fogEnabled == 1) {
         float fragDist = length(cameraPos - vWorldPos);
-        float heightFactor = exp(-max(vWorldPos.y, 0.0) * 0.002);
 
         float fogFactor;
-        if (fogMode == 0) {fogFactor = clamp((fogEnd - fragDist) / (fogEnd - fogStart), 0.0, 1.0);
+        if (fogMode == 0) {
+            fogFactor = clamp((fogEnd - fragDist) / (fogEnd - fogStart), 0.0, 1.0);
         } else {
-            float d = fogDensity * fragDist * heightFactor;
-            fogFactor = exp(-d);
+            float d = fogDensity * fragDist;
+            fogFactor = exp(-(d * d));
         }
 
-        vec3 fogColor = pow(skyColor, vec3(2.2));
+        vec3 baseFogColor = fogColor.rgb;
+        if (blendSkyColor == 1) {
+            baseFogColor = pow(skyColor, vec3(2.2)) + dlColor * 0.25;
+        }
 
-        vec3 viewDir = normalize(cameraPos - vWorldPos);
-        float sunScatter = pow(max(dot(viewDir, normalize(-direction)), 0.0), 8.0);
-        fogColor += color * sunScatter * 0.25;
-        finalColor = mix(fogColor, finalColor, fogFactor);
+        finalColor = mix(baseFogColor, finalColor, fogFactor);
     }
 
     FragColor = vec4(finalColor, mat_albedo.a);

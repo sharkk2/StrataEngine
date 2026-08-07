@@ -3,6 +3,9 @@ package org.sharkk2.sengine.core.systems;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import static org.lwjgl.glfw.GLFW.*;
 public class InputService {
 
@@ -16,6 +19,25 @@ public class InputService {
     private double scrollDX = 0, scrollDY = 0;
     private volatile boolean firstMouseEvent = true;
     private boolean mouselock;
+    private Map<String, Integer> buttonMappings = new HashMap<>();
+
+    public void setMapping(String id, int button) {
+        if (!(GLFW_KEY_0 <= button && button <= GLFW_KEY_LAST)) {
+            Logger.warning("Invalid button was set for mapping ID: " + id);
+            return;
+        }
+
+        buttonMappings.put(id, button);
+    }
+
+    public int getButton(String id) {
+        return buttonMappings.get(id);
+    }
+
+    public void nullMapping(String id) {
+        buttonMappings.remove(id);
+    }
+
 
     public InputService(Engine engine) {
         this.engine = engine;

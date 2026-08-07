@@ -119,5 +119,9 @@ public class SkyboxComponent extends Component {
         scratchHorizon.lerp(scratchHaze, 0.5f, out);
     }
 
+    @Override
+    public Component copy() {
+        return new SkyboxComponent(engine, cubemapTex);
+    }
 
 }

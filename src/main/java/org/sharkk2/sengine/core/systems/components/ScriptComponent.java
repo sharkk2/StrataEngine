@@ -1,5 +1,6 @@
 package org.sharkk2.sengine.core.systems.components;
 
+import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.core.classes.Component;
 
 import java.util.HashMap;
@@ -33,6 +34,9 @@ public class ScriptComponent extends Component {
 
         public void setFrameRunInterval(int v) {scomp.runFrameInterval = v;}
         public int getFrameRunInterval() {return scomp.runFrameInterval;}
+        public Engine getEngine() {
+            return scomp.getOwner().getEngine();
+        }
 
 
     }
@@ -60,5 +64,13 @@ public class ScriptComponent extends Component {
     @Override
     protected void onUpdate() {
 
+    }
+
+    @Override
+    public Component copy() {
+        ScriptComponent copy = new ScriptComponent(script);
+        copy.name = name + "_copy";
+        copy.runFrameInterval = runFrameInterval;
+        return copy;
     }
 }

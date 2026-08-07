@@ -12,11 +12,14 @@ import org.lwjgl.system.MemoryStack;
 import org.sharkk2.sengine.core.classes.GameObject;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
 import static org.lwjgl.assimp.Assimp.*;
@@ -28,6 +31,10 @@ import org.joml.Quaternionf;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import javax.imageio.ImageIO;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.UnsupportedAudioFileException;
 
 
 public class AssetLoader {
@@ -35,6 +42,13 @@ public class AssetLoader {
     private final Engine engine;
     private final Map<String, Integer> textureCache = new HashMap<>();
     private final Map<String, CachedModel> modelCache = new HashMap<>();
+    public static final int TEXTURE_FLIPPED = 1;
+    public static final int TEXTURE_BLENDED = 1 << 1;
+    public static final int TEXTURE_REPEATED = 1 << 2;
+    public static final int TEXTURE_NONE = 0;
+
+    public record AudioData(byte[] pcmData, int channels, int bitsPerSample, int sampleRate, boolean bigEndian) {}
+    private final Map<String, AudioData> audioCache = new HashMap<>();
     public Primitives primitives = new Primitives();
 
     public AssetLoader(Engine engine) {
@@ -107,7 +121,7 @@ public class AssetLoader {
         node.localTransform.getScale(scale);
 
         go.transform.setPosition(pos);
-        go.transform.setScale(scale);
+        go.transform.scale(scale);
 
         Vector3f euler = new Vector3f();
         rot.getEulerAnglesXYZ(euler); // returns radians
@@ -295,7 +309,7 @@ public class AssetLoader {
             int[] w = new int[1], h = new int[1];
             ByteBuffer pixels = extractEmbeddedPixels(aiScene, texIndex, w, h);
             if (pixels != null) {
-                int glId = uploadPixels(pixels, w[0], h[0],true);
+                int glId = uploadPixels(pixels, w[0], h[0], TEXTURE_BLENDED | TEXTURE_REPEATED | TEXTURE_FLIPPED);
                 textureCache.put(cacheKey, glId);
                 return glId;
             }
@@ -305,7 +319,7 @@ public class AssetLoader {
         String fullPath = (directory + relativePath).replace('\\', '/');
         if (textureCache.containsKey(fullPath)) return textureCache.get(fullPath);
 
-        int glId = loadTexture(fullPath, true);
+        int glId = loadTexture(fullPath, TEXTURE_BLENDED | TEXTURE_REPEATED| TEXTURE_FLIPPED);
         if (glId != -1) textureCache.put(fullPath, glId);
 
         return glId;
@@ -332,13 +346,19 @@ public class AssetLoader {
         }
     }
 
-    private int uploadPixels(ByteBuffer data, int width, int height, boolean blended) {
+    private int uploadPixels(ByteBuffer data, int width, int height, int flags) {
+        boolean blended = (flags & TEXTURE_BLENDED) != 0;
+        boolean repeated = (flags & TEXTURE_REPEATED) != 0;
+
         int id = glGenTextures();
         glBindTexture(GL_TEXTURE_2D, id);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        int wrap = repeated ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+
         if (blended) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -346,26 +366,14 @@ public class AssetLoader {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         }
+
         glBindTexture(GL_TEXTURE_2D, 0);
         return id;
     }
 
+    public int loadTexture(String path, int flags) {
+        boolean flipped = (flags & TEXTURE_FLIPPED) != 0;
 
-    public int loadTexture(String path) {
-        int[] width = new int[1], height = new int[1], channels = new int[1];
-        stbi_set_flip_vertically_on_load(true);
-        ByteBuffer image = stbi_load(path, width, height, channels, 4);
-        if (image == null) {
-            Logger.error("Could not load texture '" + path + "': " + stbi_failure_reason());
-            return -1;
-        }
-
-        int id = uploadPixels(image, width[0], height[0], true);
-        stbi_image_free(image);
-        return id;
-    }
-
-    public int loadTexture(String path, boolean flipped) {
         int[] width = new int[1], height = new int[1], channels = new int[1];
         stbi_set_flip_vertically_on_load(!flipped);
         ByteBuffer image = stbi_load(path, width, height, channels, 4);
@@ -374,25 +382,10 @@ public class AssetLoader {
             return -1;
         }
 
-        int id = uploadPixels(image, width[0], height[0], true);
+        int id = uploadPixels(image, width[0], height[0], flags);
         stbi_image_free(image);
         return id;
     }
-
-    public int loadTexture(String path, boolean flipped, boolean blended) {
-        int[] width = new int[1], height = new int[1], channels = new int[1];
-        stbi_set_flip_vertically_on_load(!flipped);
-        ByteBuffer image = stbi_load(path, width, height, channels, 4);
-        if (image == null) {
-            Logger.error("Could not load texture '" + path + "': " + stbi_failure_reason());
-            return -1;
-        }
-
-        int id = uploadPixels(image, width[0], height[0], blended);
-        stbi_image_free(image);
-        return id;
-    }
-
 
     public int loadEmptyTexture(int width, int height) {
         int id = glGenTextures();
@@ -403,6 +396,19 @@ public class AssetLoader {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
+        return id;
+    }
+
+    public int loadEmptyTexture3D(int width, int height, int depth) {
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_3D, id);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB16F, width, height, depth, 0, GL_RGB, GL_UNSIGNED_BYTE, (ByteBuffer) null);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_3D, 0);
         return id;
     }
 
@@ -459,6 +465,7 @@ public class AssetLoader {
                 buffer.flip();
                 glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
             } catch (IOException e) {
+                Logger.error("Oops! failed to load cube map texture ):");
                 throw new RuntimeException("Failed to load cubemap face: " + faces[i], e);
             }
         }
@@ -471,6 +478,107 @@ public class AssetLoader {
 
         glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
         return texID;
+    }
+
+    // todo: cache this maybe??
+    public int loadLutTexture(String cubeTexPath) {
+        List<Float> values = new ArrayList<>();
+        int size = 0;
+        try {
+            for (String line : Files.readAllLines(Paths.get(cubeTexPath))) {
+                line = line.trim();
+
+                if (line.startsWith("LUT_3D_SIZE")) {
+                    size = Integer.parseInt(line.split(" ")[1]);
+                } else if (!line.isEmpty() && Character.isDigit(line.charAt(0))) {
+                    String[] p = line.split("\\s+");
+                    values.add(Float.parseFloat(p[0]));
+                    values.add(Float.parseFloat(p[1]));
+                    values.add(Float.parseFloat(p[2]));
+                }
+            }
+        } catch (IOException e) {
+            Logger.error("Oops! failed to load LUT texture ):");
+
+            System.err.println("Failed to load LUT texture: " + e.getMessage());
+            return -1;
+        }
+
+        FloatBuffer buffer = BufferUtils.createFloatBuffer(values.size()); // less headache
+        for (float f : values) {buffer.put(f);}
+        buffer.flip();
+
+        int texID = glGenTextures();
+        glBindTexture(GL_TEXTURE_3D, texID);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB16F, size, size, size, 0, GL_RGB, GL_FLOAT, buffer);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        return texID;
+    }
+
+    public AudioData loadAudioFile(String path) {
+        if (audioCache.containsKey(path)) return audioCache.get(path);
+        try (AudioInputStream stream = AudioSystem.getAudioInputStream(new File(path))) {
+            AudioFormat format = stream.getFormat();
+            byte[] audioBytes = stream.readAllBytes();
+            AudioData dat = new AudioData(
+                    audioBytes,
+                    format.getChannels(),
+                    format.getSampleSizeInBits(),
+                    (int) format.getSampleRate(),
+                    format.isBigEndian()
+            );
+            audioCache.put(path, dat);
+            return dat;
+
+        } catch (UnsupportedAudioFileException | IOException e) {
+            Logger.error("Failed to load audio file: " + path, e);
+            return null;
+        }
+    }
+
+    public float[] tileUVs(float[] baseUVs, float width, float height, float textureWorldSize) {
+        float uScale = width / textureWorldSize;
+        float vScale = height / textureWorldSize;
+        float[] scaled = new float[baseUVs.length];
+        for (int i = 0; i < baseUVs.length; i += 2) {
+            scaled[i] = baseUVs[i] * uScale;
+            scaled[i + 1] = baseUVs[i + 1] * vScale;
+        }
+        return scaled;
+    }
+
+    public float[] tileCubeUVs(float[] baseUVs, float width, float height, float depth, float textureWorldSize) {
+        float[] scaled = new float[baseUVs.length];
+
+        float widthScale = width / textureWorldSize;
+        float heightScale = height / textureWorldSize;
+        float depthScale = depth / textureWorldSize;
+
+        float[][] faceScales = {
+                {widthScale, heightScale}, // Front
+                {widthScale, heightScale}, // Back
+                {depthScale, heightScale}, // Left
+                {depthScale, heightScale}, // Right
+                {widthScale, depthScale},  // Top
+                {widthScale, depthScale},  // Bottom
+        };
+
+        for (int face = 0; face < 6; face++) {
+            float uScale = faceScales[face][0];
+            float vScale = faceScales[face][1];
+
+            for (int vert = 0; vert < 4; vert++) {
+                int i = (face * 4 + vert) * 2;
+                scaled[i] = baseUVs[i] * uScale;
+                scaled[i + 1] = baseUVs[i + 1] * vScale;
+            }
+        }
+
+        return scaled;
     }
 
 
@@ -547,7 +655,7 @@ public class AssetLoader {
             return new ModelComponent(vertices, normals, uvs, indices);
         }
 
-        public ModelComponent quad() {
+        public ModelComponent plane() {
             float[] vertices = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
 
             float[] normals = {
@@ -722,6 +830,51 @@ public class AssetLoader {
             return new ModelComponent(vertices, normals, uvs, indices);
         }
 
+        public ModelComponent wireframeBox() {
+            float[] vertices = {
+                    -0.5f, -0.5f, -0.5f, // 0
+                    0.5f, -0.5f, -0.5f, // 1
+                    0.5f,  0.5f, -0.5f, // 2
+                    -0.5f,  0.5f, -0.5f, // 3
+                    -0.5f, -0.5f,  0.5f, // 4
+                    0.5f, -0.5f,  0.5f, // 5
+                    0.5f,  0.5f,  0.5f, // 6
+                    -0.5f,  0.5f,  0.5f, // 7
+            };
+
+            float[] normals = new float[8 * 3];
+            float[] uvs = new float[8 * 2];
+
+            int[] indices = {
+                    0, 1,  1, 2,  2, 3,  3, 0, // bottom face edges
+                    4, 5,  5, 6,  6, 7,  7, 4, // top face edges
+                    0, 4,  1, 5,  2, 6,  3, 7, // vertical edges
+            };
+
+            ModelComponent box = new ModelComponent(vertices, normals, uvs, indices);
+            box.drawMode = Renderer.DrawMode.LINES;
+            box.material.enabled = false;
+            return box;
+        }
+
+        public ModelComponent line() {
+            float[] vertices = {
+                    0.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f
+            };
+
+            float[] normals = new float[2 * 3];
+            float[] uvs = new float[2 * 2];
+
+            int[] indices = {
+                    0, 1 // Single edge line
+            };
+
+            ModelComponent line = new ModelComponent(vertices, normals, uvs, indices);
+            line.drawMode = Renderer.DrawMode.LINES; // Set draw mode to GL_LINES
+            line.material.enabled = false;
+            return line;
+        }
 
         public ModelComponent cone(int slices, boolean capped) {
             int sideVerts = (slices + 1) * 2; // bottom ring + apex ring (one apex per slice for correct normals)
@@ -817,7 +970,7 @@ public class AssetLoader {
             return new ModelComponent(vertices, normals, uvs, indices);
         }
 
-        public ModelComponent plane(int divisions) {
+        public ModelComponent grid(int divisions) {
             int lineVerts = divisions + 1;
             int vCount = lineVerts * lineVerts;
             float[] vertices = new float[vCount * 3];

@@ -12,6 +12,8 @@ import org.sharkk2.sengine.core.systems.renderer.Renderer;
 import java.util.*;
 
 import static org.lwjgl.glfw.GLFW.*;
+import static org.sharkk2.sengine.core.systems.AssetLoader.TEXTURE_BLENDED;
+import static org.sharkk2.sengine.core.systems.AssetLoader.TEXTURE_FLIPPED;
 
 public class MainScene extends Scene {
     public MainScene(Engine engine, String sceneName) {
@@ -34,7 +36,7 @@ public class MainScene extends Scene {
         addObject(skybox);
         environment.setActiveSkybox(skybox);
         GameObject sponza = engine.getAssetLoader().getModel("sponza");
-        sponza.transform.setScale(1.5f, 1.5f, 1.5f);
+        sponza.transform.scale(1.5f, 1.5f, 1.5f);
         addObject(sponza);
 
         GameObject cyl = new GameObject(engine);
@@ -44,24 +46,32 @@ public class MainScene extends Scene {
         cyl.attachComponent(engine.getAssetLoader().primitives.cylinder(64, true));
         cyl.getComponent(ModelComponent.class).material.roughness = 3;
 
-        LightComponent flashlight = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
-        flashlight.spotLightInnerCutoff = 0.982f;
-        flashlight.spotLightOuterCutoff = 0.935f;
-        flashlight.intensity = 7.0f;
-        flashlight.range *= 1.5f;
-        flashlight.castShadow = true;
-        flashlight.lightCookieTex = engine.getAssetLoader().loadTexture("src/main/resources/textures/flashlightCookie3.jpg");
-        flashlight.offset.set(-0.2f, -0.25f, 0.05f);
-        GameObject player = new GameObject(engine);
-        CameraComponent cam = engine.getCameraService().createCamera(true);
+        LightComponent flight = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
+        flight.spotLightInnerCutoff = 0.982f;
+        flight.spotLightOuterCutoff = 0.935f;
+        flight.intensity = 7.0f;
+        flight.range *= 1.5f;
+        flight.castShadow = true;
+        flight.lightCookieTex = engine.getAssetLoader().loadTexture("src/main/resources/textures/flashlightCookie3.jpg", TEXTURE_BLENDED | TEXTURE_FLIPPED);
+        flight.offset.set(-0.2f, -0.25f, 0.05f);
+        GameObject player = engine.getAssetLoader().getModel("pokeball");
+        player.setName("player");
+        player.transform.scale(0.001f);
+        player.cascade(ModelComponent.class, (mc) -> {
+            mc.visible = false;
+            mc.getOwner().attachComponent(new ColliderComponent(mc.bounds));
+        });
+        CameraComponent cam = new CameraComponent();
+        engine.getCameraService().setPrimaryCamera(cam);
         player.attachComponent(cam);
+
         player.attachComponent(new PlayerController());
-        player.attachComponent(flashlight);
+        player.attachComponent(flight);
         float[] flickerTimers = {10.0f + new Random().nextFloat() * 5.0f, 0.0f};
         int[] flickerPulsesRemaining = {0};
         Random flickerRandom = new Random();
-        Vector3f defaultOffset = new Vector3f(flashlight.offset);
-        Vector3f currentOffset = new Vector3f(flashlight.offset);
+        Vector3f defaultOffset = new Vector3f(flight.offset);
+        Vector3f currentOffset = new Vector3f(flight.offset);
 
         player.attachComponent(new ScriptComponent((ctx) -> {
             Boolean enabled = ctx.readState("enabled");
@@ -72,12 +82,12 @@ public class MainScene extends Scene {
             if (enabled == null) {
                 dirs = new HashMap<>();
                 ctx.state("enabled", true);
-                ctx.state("currentIntensity", flashlight.intensity);
+                ctx.state("currentIntensity", flight.intensity);
                 ctx.state("currentFov", cam.getFov());
                 ctx.state("defaultFov", cam.getFov());
                 ctx.state("dirs", dirs);
                 enabled = true;
-                currentIntensity = flashlight.intensity;
+                currentIntensity = flight.intensity;
                 defaultFov = cam.getFov();
                 currentFov = cam.getFov();
             }
@@ -90,7 +100,7 @@ public class MainScene extends Scene {
 
             boolean rightClickHeld = engine.getInputService().isMouseDown(GLFW_MOUSE_BUTTON_RIGHT);
             currentOffset.lerp(rightClickHeld ? new Vector3f() : defaultOffset, Math.min(1.0f, dt * 10.0f));
-            flashlight.offset.set(currentOffset);
+            flight.offset.set(currentOffset);
 
             float targetFov = rightClickHeld ? defaultFov - 5.0f : defaultFov;
             currentFov += (targetFov - currentFov) * Math.min(1.0f, dt * 10.0f);
@@ -100,7 +110,7 @@ public class MainScene extends Scene {
             dirs.put(engine.getTotalFrameCount(), cam.getDirection());
             Vector3f pastDir = dirs.get(Math.max(engine.getTotalFrameCount() - 25, 0));
             if (pastDir != null) {
-                flashlight.spotLightDirection.set(pastDir.x, pastDir.y - 0.1f, pastDir.z).normalize();
+                flight.spotLightDirection.set(pastDir.x, pastDir.y - 0.1f, pastDir.z).normalize();
                 dirs.remove(engine.getTotalFrameCount() - 25);
             }
             ctx.state("dirs", dirs);
@@ -128,8 +138,15 @@ public class MainScene extends Scene {
                 }
             }
 
-            flashlight.intensity = outputIntensity;
+            flight.intensity = outputIntensity;
         }));
+
+        GameObject secondaryCam = new GameObject(engine);
+        secondaryCam.setName("secondaryCam");
+        CameraComponent secCam = new CameraComponent();
+        secondaryCam.attachComponent(secCam);
+        secondaryCam.transform.setPosition(-11.9f, 17.7f, -0.4f);
+        addObject(secondaryCam);
 
 
         GameObject sphere = new GameObject(engine);
@@ -153,9 +170,8 @@ public class MainScene extends Scene {
 
         GameObject camm = engine.getAssetLoader().getModel("camera");
         camm.transform.setPosition(5,23,0);
-        camm.transform.setScale(2,2,2);
-        camm.transform.pitch = 30;
-        camm.transform.yaw = 180;
+        camm.transform.scale(2,2,2);
+        camm.transform.rotate(30, 180, 0);
         camm.setName("cam");
         camm.renderMethod = Renderer.RenderMethod.RENDER_FORWARD;
         addObject(camm);
@@ -163,7 +179,7 @@ public class MainScene extends Scene {
         GameObject cube = new GameObject(engine);
         cube.attachComponent(engine.getAssetLoader().primitives.cube());
         cube.transform.setPosition(0,4,4);
-        cube.transform.yaw = 40; cube.transform.pitch = 30;
+        cube.transform.rotate(30, 40, 0);
         cube.getComponent(ModelComponent.class).material.albedo = new Vector3f(1,0,0);
         addObject(cube);
 
@@ -181,14 +197,16 @@ public class MainScene extends Scene {
 
         GameObject trees = engine.getAssetLoader().getModel("trees");
         trees.transform.setPosition(10, 4, 20);
-        trees.transform.setScale(0.01f, 0.01f, 0.01f);
+        trees.transform.scale(0.01f, 0.01f, 0.01f);
         addObject(trees);
 
         GameObject shark = engine.getAssetLoader().getModel("shark");
         shark.transform.setPosition(6, 24, -8);
-      //  shark.cascade(go -> {
-        //    go.renderMethod = Renderer.RenderMethod.RENDER_FORWARD;
-     //   });
+        shark.cascade(ModelComponent.class, (mc) -> {
+            if (mc != null && (mc.material.emissiveTex != -1 || mc.material.emissive.length()!=0)) {
+                mc.material.emissiveStrength = 5;
+            }
+        });
 
         addObject(shark);
 
@@ -197,16 +215,26 @@ public class MainScene extends Scene {
         cubie.attachComponent(mcc);
         mcc.material.albedo.set(0.8f,0.8f,0.8f);
         cubie.transform.setPosition(30,30,30);
-        cubie.transform.setScale(8, 1, 8);
+        cubie.transform.scale(8, 1, 8);
+
         addObject(cubie);
 
+        GameObject pokeball = engine.getAssetLoader().getModel("pokeball");
+        pokeball.transform.setPosition(30, 40, 30);
+        pokeball.transform.scale(0.01f);
+        pokeball.cascade(ModelComponent.class, (mc) -> {
+            mc.material.emissiveStrength = 5;
+        });
+        addObject(pokeball);
+
         GameObject gridie = new GameObject(engine);
-        gridie.attachComponent(engine.getAssetLoader().primitives.plane(12));
+        gridie.attachComponent(engine.getAssetLoader().primitives.grid(12));
         gridie.transform.setPosition(6, 29, -9);
-        gridie.transform.setScale(2);
+        gridie.transform.scale(2);
         addObject(gridie);
 
         GameObject flashLight = engine.getAssetLoader().getModel("flashlight");
+        flashLight.setName("flashlight");
         LightComponent cubielightComp = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
         cubielightComp.intensity = 4;
         cubielightComp.range = 5;
@@ -217,14 +245,25 @@ public class MainScene extends Scene {
         );
         cubielightComp.spotLightDirection.set(new Vector3f(1, -0.7f, 1));
         flashLight.transform.setPosition(28, 30.6f, 27);
-        flashLight.transform.setRotation(-10, 143f, 0);
-        flashLight.transform.setScale(0.04f);
+        flashLight.transform.rotate(-10, 143f, 0);
+        flashLight.transform.scale(0.04f);
         flashLight.attachComponent(cubielightComp);
         cubielightComp.offset.set(0, 0.6, 0);
+        flashLight.cascade(ModelComponent.class, (mc) -> {
+            if (mc != null && (mc.material.emissiveTex != -1 || mc.material.emissive.length()!=0)) {
+                mc.material.emissiveStrength = 5;
+            }
+        });
+
         addObject(flashLight);
 
         GameObject sword = engine.getAssetLoader().getModel("sword");
         sword.transform.setPosition(3, 24, -8);
+        sword.cascade(ModelComponent.class, (mc) -> {
+            if (mc!=null) {
+                if (mc.material.emissiveTex != -1) mc.material.emissiveStrength = 6;
+            }
+        });
         addObject(sword);
 
         GameObject brickawll = new GameObject(engine);
@@ -235,16 +274,18 @@ public class MainScene extends Scene {
         quad.material.albedo.set(0.92f, 0.92f, 0.92f);
         quad.material.roughness = 0.2f;
         brickawll.attachComponent(quad);
-        brickawll.transform.setScale(2);
+        brickawll.transform.scale(2);
         brickawll.transform.setPosition(3, 24, -11);
-        brickawll.transform.yaw = 40;
-
         addObject(brickawll);
 
 
-        spawnPoints.add(new Vector3f(5,6,5));
-        doDayCycle = true;
 
+        spawnPoints.add(new Vector3f(5,26,5));
+        lights.globalLight.intensity = 10;
+        lights.globalLight.ambient.set(0.03, 0.03, 0.04);
+      /*  lights.globalLight.direction.set(1, 1, 1);
+        lights.globalLight.enabled = false;
+        lights.globalLight.ambient.set(0.01f, 0.01f, 0.02f); */
 
     }
 

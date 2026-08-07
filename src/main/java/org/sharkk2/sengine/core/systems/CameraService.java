@@ -19,16 +19,14 @@ public class CameraService {
 
     public CameraService(Engine engine) {this.engine = engine;}
 
-    public CameraComponent createCamera(boolean setPrimary) {
-       CameraComponent cc = new CameraComponent();
-       cameras.put(cc.getID(), cc);
-       if (setPrimary) primaryCamera = cc.getID();
-       return cc;
+
+    public void register(CameraComponent cc) {
+        cameras.put(cc.getID(), cc);
     }
 
-    public void destroyCamera(CameraComponent cc) {
+    public void unregister(CameraComponent cc) {
         cameras.remove(cc.getID());
-        if (primaryCamera.equals(cc.getID())) primaryCamera = null;
+        if (primaryCamera != null && primaryCamera.equals(cc.getID())) primaryCamera = null;
     }
 
     public void setPrimaryCamera(CameraComponent cc) {

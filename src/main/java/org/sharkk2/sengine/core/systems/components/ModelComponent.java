@@ -3,6 +3,7 @@ package org.sharkk2.sengine.core.systems.components;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
+import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -11,17 +12,22 @@ import java.nio.ByteBuffer;
 import static org.lwjgl.opengl.GL43.*;
 
 public class ModelComponent extends Component {
-    public final int vao;
-    public final int vboVerts;
-    public final int vboNormals;
-    public final int vboUVs;
-    public final int ebo;
+    public int vao;
+    public int vboVerts;
+    public int vboNormals;
+    public int vboUVs;
+    public int ebo;
     public final int indexCount;
     public float[] vertices;
-    public float boundingRadius = 1.0f;
+    public float[] normals;
+    public float[] uvs;
+    public int[] indices;
     public Material material = new Material();
     public Renderer.DrawMode drawMode = Renderer.DrawMode.TRIANGLES;
-    public boolean castShadow;
+    public boolean castShadow = true;
+    public boolean visible = true;
+    public final Bounds bounds = new Bounds();
+
 
     public static class Material {
         public Vector3f albedo = new Vector3f(1, 1, 1);
@@ -75,6 +81,32 @@ public class ModelComponent extends Component {
             return opacity < 1.0f || opacityTex != -1 || albedoTransparent;
         }
 
+        public Material copy() {
+            Material copy = new Material();
+            copy.albedo = new Vector3f(this.albedo);
+            copy.roughness = this.roughness;
+            copy.metalness = this.metalness;
+            copy.emissive = new Vector3f(this.emissive);
+            copy.emissiveStrength = this.emissiveStrength;
+            copy.opacity = this.opacity;
+
+            copy.albedoTex = this.albedoTex;
+            copy.normalTex = this.normalTex;
+            copy.roughnessTex = this.roughnessTex;
+            copy.metalnessTex = this.metalnessTex;
+            copy.aoTex = this.aoTex;
+            copy.emissiveTex = this.emissiveTex;
+            copy.heightTex = this.heightTex;
+            copy.opacityTex = this.opacityTex;
+            copy.alphaMaskTex = this.alphaMaskTex;
+
+            copy.enabled = this.enabled;
+            copy.alphaMaskThreshold = this.alphaMaskThreshold;
+            copy.alphaCutout = this.alphaCutout;
+
+            return copy;
+        }
+
         @Override
         public String toString() {
             return "Material {\n" +
@@ -100,16 +132,35 @@ public class ModelComponent extends Component {
     }
 
 
-    public ModelComponent(float[] verticies, float[] normals, float[] uvs, int[] indices) {
+    public ModelComponent(float[] vertices, float[] normals, float[] uvs, int[] indices) {
         this.indexCount = indices.length;
-        this.vertices = verticies;
+        this.vertices = vertices;
+        this.uvs = uvs;
+        this.normals = normals;
+        this.indices = indices;
 
+
+
+    }
+
+    public void cleanup() {
+        glDeleteBuffers(vboVerts);
+        glDeleteBuffers(vboNormals);
+        glDeleteBuffers(vboUVs);
+        glDeleteBuffers(ebo);
+        glDeleteVertexArrays(vao);
+    }
+
+
+
+    @Override
+    protected void onObjectAttach() {
         vao = glGenVertexArrays();
         glBindVertexArray(vao);
 
         vboVerts = glGenBuffers();
         glBindBuffer(GL_ARRAY_BUFFER, vboVerts);
-        glBufferData(GL_ARRAY_BUFFER, verticies, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, false, 3 * Float.BYTES, 0);
         glEnableVertexAttribArray(0);
 
@@ -129,31 +180,23 @@ public class ModelComponent extends Component {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
         glBindVertexArray(0);
-        float maxDistSq = 0;
-        for (int i = 0; i<vertices.length; i+=3) {
-            float d = verticies[i]*verticies[i] + verticies[i+1]*verticies[i+1] + verticies[i+2]*verticies[i+2];
-            if (d > maxDistSq) maxDistSq = d;
-        }
-        boundingRadius = (float) Math.sqrt(maxDistSq);
-
+        bounds.computeLocals(vertices);
     }
-
-    public void cleanup() {
-        glDeleteBuffers(vboVerts);
-        glDeleteBuffers(vboNormals);
-        glDeleteBuffers(vboUVs);
-        glDeleteBuffers(ebo);
-        glDeleteVertexArrays(vao);
-    }
-
-    @Override
-    protected void onObjectAttach() {}
 
     @Override
     protected void onObjectDetach() {cleanup();}
 
     @Override
     protected void onUpdate() {
+        bounds.update(owner.transform.calculateWorldMatrix());
+    }
 
+    @Override
+    public Component copy() {
+        ModelComponent copy = new ModelComponent(vertices, normals, uvs, indices);
+        copy.material = material.copy();
+        copy.name = name + "_copy";
+        copy.drawMode = drawMode;
+        return copy;
     }
 }
