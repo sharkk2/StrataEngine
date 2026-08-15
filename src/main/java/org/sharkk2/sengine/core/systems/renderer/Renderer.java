@@ -1,16 +1,13 @@
 package org.sharkk2.sengine.core.systems.renderer;
 
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
-import org.sharkk2.sengine.core.systems.components.CameraComponent;
-import org.sharkk2.sengine.core.systems.components.LightComponent;
-import org.sharkk2.sengine.core.systems.components.ModelComponent;
-import org.sharkk2.sengine.core.systems.components.SkyboxComponent;
+import org.sharkk2.sengine.core.systems.components.*;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -37,6 +34,8 @@ public class Renderer {
     private final ShaderService.Shader ssaoBlurShader;
     private final ShaderService.UBO cameraUBO;
     private final ShaderService.UBO fogUBO;
+    private final ShaderService.SSBO lightSSBO;
+    private final ShaderService.SSBO boneMatrixSSBO;
     private final GBuffer gbuffer;
     private final SSAOBuffer ssaoBuffer;
 
@@ -58,6 +57,8 @@ public class Renderer {
     private static final int LIGHT_STRUCT_BYTES = 80; // must match the Light struct size (std430) in the lighting/object shaders
     private static final int LIGHT_SSBO_BINDING = 2; // camera UBO=0, fog UBO=1
     private static final int INITIAL_LIGHT_CAPACITY = 128;
+    private static final int BONE_SSBO_BINDING = 3;
+    private static final int INITIAL_BONE_CAPACITY = 128; // joints
     private static final String[] COOKIE_TEX_UNIFORMS = new String[MAX_COOKIE_LIGHTS];
     static {
         for (int i = 0; i < MAX_COOKIE_LIGHTS; i++) {
@@ -65,9 +66,7 @@ public class Renderer {
         }
     }
 
-    private final int lightSSBO;
-    private ByteBuffer lightStagingBuffer;
-    private int lightBufferCapacity;
+
 
     private static final int TEX_ALBEDO = 0;
     private static final int TEX_ROUGHNESS = 1;
@@ -130,14 +129,8 @@ public class Renderer {
         cameraUBO = engine.getShaderService().createUBO("camera", 0, 192);
         fogUBO = engine.getShaderService().createUBO("fog", 1, 48);
 
-        lightBufferCapacity = INITIAL_LIGHT_CAPACITY;
-        lightStagingBuffer = MemoryUtil.memAlloc(lightBufferCapacity * LIGHT_STRUCT_BYTES);
-        lightSSBO = glGenBuffers();
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) lightBufferCapacity * LIGHT_STRUCT_BYTES, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_SSBO_BINDING, lightSSBO);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
+        lightSSBO = engine.getShaderService().createSSBO("lights", LIGHT_SSBO_BINDING, INITIAL_LIGHT_CAPACITY * LIGHT_STRUCT_BYTES);
+        boneMatrixSSBO = engine.getShaderService().createSSBO("boneMatrices", BONE_SSBO_BINDING, INITIAL_BONE_CAPACITY * 64);
         float[] quadVertices = {
                 -1f, 1f, 0f, 1f,
                 -1f, -1f, 0f, 0f,
@@ -216,7 +209,6 @@ public class Renderer {
             setupObjectShader(scene);
 
             for (GameObject object : sceneObjects) drawObject(object);
-            Vector3f cp = camera.getOwner().transform.getPosition();
             engine.setWindowTitle("SharkEngine " + engine.version + " [WIREFRAME]");
             return;
         } // if wireframe on, if we used deferred or post processing, the 2D fullscreen quads will cover the screen, plus its useless cuz its just lines
@@ -401,6 +393,7 @@ public class Renderer {
         unit = bindTexture2D(gBufferShader, TEX_AO, model.material.aoTex, unit);
         unit = bindTexture2D(gBufferShader, TEX_ALPHA_MASK, model.material.alphaMaskTex, unit);
         bindTexture2D(gBufferShader, TEX_OPACITY, model.material.opacityTex, unit);
+        uploadBoneMatrices(gBufferShader, model);
         glDrawElements(model.drawMode == DrawMode.TRIANGLES ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
@@ -473,6 +466,36 @@ public class Renderer {
         renderQueue.add(object);
     }
 
+    private AnimationComponent findAnimComp(GameObject go) {
+        while (go != null) {
+            if (go.hasComponent(AnimationComponent.class)) return go.getComponent(AnimationComponent.class);
+            go = go.parent;
+        }
+        return null;
+    }
+
+    private void uploadBoneMatrices(ShaderService.Shader shader, ModelComponent model) {
+        if (model.boneIds == null) {
+            shader.setInt("uSkinned", 0);
+            return;
+        }
+
+        AnimationComponent anim = findAnimComp(model.getOwner());
+        Matrix4f[] matrices = anim != null ? anim.getBoneMatrices() : null;
+        if (matrices == null) {
+            shader.setInt("uSkinned", 0);
+            return;
+        }
+
+        ByteBuffer buf = boneMatrixSSBO.beginUpload(matrices.length * 64);
+        FloatBuffer fbuf = buf.asFloatBuffer();
+        for (int i = 0; i < matrices.length; i++) matrices[i].get(i * 16, fbuf);
+        buf.position(matrices.length * 64);
+        boneMatrixSSBO.endUpload();
+
+        shader.setInt("uSkinned", 1);
+    }
+
     private void drawModel(ModelComponent model) {
         if (!model.visible) return;
         glBindVertexArray(model.vao);
@@ -501,6 +524,7 @@ public class Renderer {
         unit = bindTexture2D(objectShader, TEX_AO, model.material.aoTex, unit);
         unit = bindTexture2D(objectShader, TEX_ALPHA_MASK, model.material.alphaMaskTex, unit);
         bindTexture2D(objectShader, TEX_OPACITY, model.material.opacityTex, unit);
+        uploadBoneMatrices(objectShader, model);
         glDrawElements(model.drawMode == DrawMode.TRIANGLES ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
@@ -521,13 +545,11 @@ public class Renderer {
 
         int liveCount = 0;
         for (LightComponent light : thelights) {
-            if (light.getOwner() == null) break; // nulls are sorted to the end
+            if (light.getOwner() == null) break;
             liveCount++;
         }
 
-        checkLightCapacity(liveCount);
-
-        lightStagingBuffer.clear();
+        ByteBuffer buf = lightSSBO.beginUpload(liveCount * LIGHT_STRUCT_BYTES);
         int cookieSlot = 0;
         for (int i = 0; i < liveCount; i++) {
             LightComponent light = thelights.get(i);
@@ -537,22 +559,17 @@ public class Renderer {
             boolean wantsCookie = light.type == LightComponent.LightType.SPOT_LIGHT && light.lightCookieTex != -1;
             boolean boundCookie = wantsCookie && cookieSlot < MAX_COOKIE_LIGHTS;
 
-            // vec3 position + float range
-            lightStagingBuffer.putFloat(pos.x + off.x).putFloat(pos.y + off.y).putFloat(pos.z + off.z).putFloat(light.range);
-            // vec3 color + float intensity
-            lightStagingBuffer.putFloat(light.color.x).putFloat(light.color.y).putFloat(light.color.z).putFloat(light.intensity);
-            // vec3 direction + float constant
-            lightStagingBuffer.putFloat(light.spotLightDirection.x).putFloat(light.spotLightDirection.y).putFloat(light.spotLightDirection.z).putFloat(light.constant);
-            // linear, quadratic, innerCutOff, outerCutOff
-            lightStagingBuffer.putFloat(light.linear);
-            lightStagingBuffer.putFloat(light.quadratic);
-            lightStagingBuffer.putFloat(light.spotLightInnerCutoff);
-            lightStagingBuffer.putFloat(light.spotLightOuterCutoff);
-            // type, hasCookie, cookieSlot, pad
-            lightStagingBuffer.putInt(light.type == LightComponent.LightType.SPOT_LIGHT ? 1 : 0);
-            lightStagingBuffer.putInt(boundCookie ? 1 : 0);
-            lightStagingBuffer.putInt(boundCookie ? cookieSlot : -1);
-            lightStagingBuffer.putInt(0);
+            buf.putFloat(pos.x + off.x).putFloat(pos.y + off.y).putFloat(pos.z + off.z).putFloat(light.range);
+            buf.putFloat(light.color.x).putFloat(light.color.y).putFloat(light.color.z).putFloat(light.intensity);
+            buf.putFloat(light.spotLightDirection.x).putFloat(light.spotLightDirection.y).putFloat(light.spotLightDirection.z).putFloat(light.constant);
+            buf.putFloat(light.linear);
+            buf.putFloat(light.quadratic);
+            buf.putFloat(light.spotLightInnerCutoff);
+            buf.putFloat(light.spotLightOuterCutoff);
+            buf.putInt(light.type == LightComponent.LightType.SPOT_LIGHT ? 1 : 0);
+            buf.putInt(boundCookie ? 1 : 0);
+            buf.putInt(boundCookie ? cookieSlot : -1);
+            buf.putInt(0);
 
             if (boundCookie) {
                 int unit = COOKIE_TEX_UNIT_BASE + cookieSlot;
@@ -562,34 +579,12 @@ public class Renderer {
                 cookieSlot++;
             }
         }
-        lightStagingBuffer.flip();
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightSSBO);
-        if (liveCount > 0) glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, lightStagingBuffer);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        lightSSBO.endUpload();
 
         shader.setInt("lightCount", liveCount);
     }
 
 
-    private void checkLightCapacity(int requiredLights) {
-        if (requiredLights <= lightBufferCapacity) return;
-        int newCapacity = lightBufferCapacity;
-        while (newCapacity < requiredLights) newCapacity *= 2;
-        MemoryUtil.memFree(lightStagingBuffer);
-        lightStagingBuffer = MemoryUtil.memAlloc(newCapacity * LIGHT_STRUCT_BYTES);
-        lightBufferCapacity = newCapacity;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) lightBufferCapacity * LIGHT_STRUCT_BYTES, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_SSBO_BINDING, lightSSBO);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        Logger.warning("grew light SSBO capacity to " + lightBufferCapacity + " lights");
-    }
-
-    public void cleanup() {
-        MemoryUtil.memFree(lightStagingBuffer);
-        glDeleteBuffers(lightSSBO);
-    }
 
     private int bindTexture2D(ShaderService.Shader shader, int texIndex, int textureId, int unit) {
         boolean hasTexture = textureId != -1;
@@ -620,6 +615,7 @@ public class Renderer {
             }
 
             depthShader.setMat4("model", obj.transform.calculateWorldMatrix());
+            uploadBoneMatrices(depthShader, model);
             glDisable(GL_CULL_FACE); // don't rely on winding for shadow casters
             glDrawElements(GL_TRIANGLES, model.indexCount, GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);

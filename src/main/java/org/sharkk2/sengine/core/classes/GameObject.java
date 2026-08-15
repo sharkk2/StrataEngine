@@ -201,6 +201,7 @@ public class GameObject {
     }
 
     public <T extends Component> T getComponent(Class<T> type) {return type.cast(components.get(type));}
+    public Collection<Component> getComponents() { return components.values(); }
 
     public void detatchComponent(Component component) {
         components.remove(component); component.onDetach();

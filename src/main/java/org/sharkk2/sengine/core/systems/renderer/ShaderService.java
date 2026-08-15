@@ -3,6 +3,7 @@ package org.sharkk2.sengine.core.systems.renderer;
 import org.joml.Matrix4fc;
 import org.joml.*;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
@@ -18,6 +19,7 @@ import static org.lwjgl.opengl.GL43.*;
 public class ShaderService {
     private final Map<String, Shader> shaders = new HashMap<>();
     private final Map<String, UBO> ubos = new HashMap<>();
+    private final Map<String, SSBO> ssbos = new HashMap<>();
     private final Engine engine;
 
     public ShaderService(Engine engine) {this.engine = engine;}
@@ -80,7 +82,12 @@ public class ShaderService {
         return ubos.computeIfAbsent(name, k -> new UBO(bindingPoint, sizeBytes));
     }
 
+    public SSBO createSSBO(String name, int bindingPoint, int sizeBytes) {
+        return ssbos.computeIfAbsent(name, k-> new SSBO(bindingPoint, sizeBytes));
+    }
+
     public UBO getUBO(String name) {return ubos.get(name);}
+    public SSBO getSSBO(String name) {return ssbos.get(name);}
 
 
     public static class UBO {
@@ -141,11 +148,66 @@ public class ShaderService {
         public void destroy() {glDeleteBuffers(id);}
     }
 
+    public static class SSBO {
+        private final int bindingPoint;
+        private final int id;
+        private ByteBuffer staging;
+        private int sizeBytes;
+
+        public SSBO(int bindingPoint, int initialSizeBytes) {
+            this.bindingPoint = bindingPoint;
+            this.sizeBytes = initialSizeBytes;
+            this.staging = MemoryUtil.memAlloc(initialSizeBytes);
+            this.id = glGenBuffers();
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, initialSizeBytes, GL_DYNAMIC_DRAW);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, bindingPoint, id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+
+        public ByteBuffer beginUpload(int requiredBytes) {
+            if (requiredBytes > sizeBytes) grow(requiredBytes);
+            staging.clear();
+            return staging;
+        }
+
+        public void endUpload() {
+            staging.flip();
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, staging);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+
+        private void grow(int requiredBytes) {
+            int newCap = sizeBytes;
+            while (newCap < requiredBytes) newCap *= 2;
+            MemoryUtil.memFree(staging);
+            staging = MemoryUtil.memAlloc(newCap);
+            sizeBytes = newCap;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, sizeBytes, GL_DYNAMIC_DRAW);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, bindingPoint, id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+
+        public void destroy() {
+            MemoryUtil.memFree(staging);
+            glDeleteBuffers(id);
+        }
+
+        public int getId() { return id; }
+        public int getBindingPoint() { return bindingPoint; }
+        public int getSizeBytes() { return sizeBytes; }
+
+    }
+
     public void destroyAll() {
         shaders.values().forEach(Shader::destroy);
         shaders.clear();
         ubos.values().forEach(UBO::destroy);
         ubos.clear();
+        ssbos.values().forEach(SSBO::destroy);
+        ssbos.clear();
     }
 
     public static class Shader {

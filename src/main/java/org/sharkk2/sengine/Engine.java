@@ -217,7 +217,6 @@ public class Engine {
         shaderService.destroyAll();
         renderer.getPostProcessor().destroy();
         renderer.getGbuffer().destroy();
-        renderer.cleanup();
         sceneManager.destroy();
         onDestroy();
         Logger.info("Destroying window");

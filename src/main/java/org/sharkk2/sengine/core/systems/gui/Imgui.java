@@ -115,6 +115,7 @@ public class Imgui {
         }
 
         if (selectedObject != null) {
+            renderObjectMenu(selectedObject);
             engine.getDebugger().visualizeDirection(selectedObject, 3);
 
             if (selectedObject.hasComponent(ModelComponent.class)) {
@@ -165,7 +166,7 @@ public class Imgui {
     private void tickGUI() {
         InputService input = engine.getInputService();
         CameraComponent cam = engine.getCameraService().getPrimaryCamera();
-        if (input.isMousePressed(GLFW_MOUSE_BUTTON_LEFT) && !ImGuizmo.isOver() && !ImGuizmo.isUsing()) {
+        if (input.isMousePressed(GLFW_MOUSE_BUTTON_LEFT) && !ImGuizmo.isOver() && !ImGuizmo.isUsing() && !ImGui.getIO().getWantCaptureMouse()) {
             GameObject clicked = engine.getRaycastService().castScreenRay(
                     input.getMouseX(),
                     input.getMouseY(),
@@ -176,9 +177,10 @@ public class Imgui {
                     1000,
                     true
             );
-            selectedObject = clicked;
-            if (selectedObject != null && input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) {
-                selectedObject = selectedObject.getRoot();
+            if (clicked != null && input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) {
+                selectedObject = clicked;
+            } else if (clicked != null) {
+                selectedObject = clicked.getRoot();
             }
         }
 
@@ -297,7 +299,30 @@ public class Imgui {
             engine.getSceneManager().getActiveScene().setTime(time[0]);
         }
 
+        Scene.Lights lights = engine.getSceneManager().getActiveScene().lights;
+        float[] ambX = {lights.globalLight.ambient.x};
+        float[] ambY = {lights.globalLight.ambient.y};
+        float[] ambZ = {lights.globalLight.ambient.z};
 
+        if (ImGui.sliderFloat("Ambient Red", ambX, 0, 1)) {
+            lights.globalLight.ambient.x = ambX[0];
+        }
+
+        if (ImGui.sliderFloat("Ambient Green", ambY, 0, 1)) {
+            lights.globalLight.ambient.y = ambY[0];
+        }
+
+        if (ImGui.sliderFloat("Ambient Blue", ambZ, 0,1)){
+            lights.globalLight.ambient.z = ambZ[0];
+        }
+    }
+
+    private void renderObjectMenu(GameObject object) {
+        if (object == null) return;
+        if (ImGui.begin(object.getName())) {
+            ImGui.text(object.getName());
+        }
+        ImGui.end();
     }
 
 

@@ -218,8 +218,16 @@ public class RoomsScene extends Scene {
         human = engine.getAssetLoader().getModel("human");
         human.setName("yobro");
         human.transform.setPosition(40, 0, 47);
-
         addObject(human);
+
+
+        GameObject crab = engine.getAssetLoader().getModel("crab");
+        addObject(crab);
+        crab.transform.setPosition(41, 0, 45);
+        AnimationComponent animation = new AnimationComponent(engine.getAssetLoader().getAnimations("crab"));
+        crab.attachComponent(animation);
+        animation.animationSpeed = 3;
+        animation.play("Dance");
 
 
         environment.fog.density = 0.01f;
@@ -228,10 +236,10 @@ public class RoomsScene extends Scene {
 
         lights.globalLight.direction.set(1,1,1);
         lights.globalLight.enabled = false;
-        lights.globalLight.ambient.set(0.02f, 0.02f, 0.02f);
+        lights.globalLight.ambient.set(0.2f, 0.2f, 0.2f);
         doDayCycle = false;
 
-        engine.setValue("exposure", 1f);
+        engine.setValue("exposure", 1.3f);
         engine.setValue("saturation", 0.9f);
 
         int lut = engine.getAssetLoader().loadLutTexture("src/main/resources/textures/luts/backrooms-colors.cube");

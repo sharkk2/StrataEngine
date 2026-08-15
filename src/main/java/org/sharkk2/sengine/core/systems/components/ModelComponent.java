@@ -27,6 +27,11 @@ public class ModelComponent extends Component {
     public boolean castShadow = true;
     public boolean visible = true;
     public final Bounds bounds = new Bounds();
+    public static final int MAX_BONE_INFLUENCE = 4;
+    public int vboBoneIds, vboBoneWeights;
+    public int[] boneIds;
+    public float[] boneWeights;
+    public boolean animated = false;
 
 
     public static class Material {
@@ -133,14 +138,18 @@ public class ModelComponent extends Component {
 
 
     public ModelComponent(float[] vertices, float[] normals, float[] uvs, int[] indices) {
+        this(vertices, normals, uvs, indices, null, null);
+    }
+
+    public ModelComponent(float[] vertices, float[] normals, float[] uvs, int[] indices, int[] boneIds, float[] boneWeights) {
         this.indexCount = indices.length;
         this.vertices = vertices;
         this.uvs = uvs;
         this.normals = normals;
         this.indices = indices;
-
-
-
+        this.boneIds = boneIds;
+        this.boneWeights = boneWeights;
+        this.animated = true;
     }
 
     public void cleanup() {
@@ -148,7 +157,10 @@ public class ModelComponent extends Component {
         glDeleteBuffers(vboNormals);
         glDeleteBuffers(vboUVs);
         glDeleteBuffers(ebo);
+        if (boneIds != null) glDeleteBuffers(vboBoneIds);
+        if (boneWeights != null) glDeleteBuffers(vboBoneWeights);
         glDeleteVertexArrays(vao);
+
     }
 
 
@@ -179,7 +191,22 @@ public class ModelComponent extends Component {
         ebo = glGenBuffers();
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW);
+
+        if (boneIds != null && boneWeights != null) {
+            vboBoneIds = glGenBuffers();
+            glBindBuffer(GL_ARRAY_BUFFER, vboBoneIds);
+            glBufferData(GL_ARRAY_BUFFER, boneIds, GL_STATIC_DRAW);
+            glVertexAttribIPointer(3, 4, GL_INT, 4 * Integer.BYTES, 0);
+            glEnableVertexAttribArray(3);
+
+            vboBoneWeights = glGenBuffers();
+            glBindBuffer(GL_ARRAY_BUFFER, vboBoneWeights);
+            glBufferData(GL_ARRAY_BUFFER, boneWeights, GL_STATIC_DRAW);
+            glVertexAttribPointer(4, 4, GL_FLOAT, false, 4 * Float.BYTES, 0);
+            glEnableVertexAttribArray(4);
+        }
         glBindVertexArray(0);
+
         bounds.computeLocals(vertices);
     }
 
@@ -193,7 +220,7 @@ public class ModelComponent extends Component {
 
     @Override
     public Component copy() {
-        ModelComponent copy = new ModelComponent(vertices, normals, uvs, indices);
+        ModelComponent copy = new ModelComponent(vertices, normals, uvs, indices, boneIds, boneWeights);
         copy.material = material.copy();
         copy.name = name + "_copy";
         copy.drawMode = drawMode;

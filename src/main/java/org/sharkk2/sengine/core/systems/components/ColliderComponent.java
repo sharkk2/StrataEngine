@@ -103,6 +103,6 @@ public class ColliderComponent extends Component {
 
     @Override
     public Component copy() {
-        return this;
+        return new ColliderComponent(bounds);
     }
 }

@@ -28,8 +28,9 @@ public class Game extends Engine {
          getAssetLoader().loadModel("src/main/resources/models/desert.glb", "terrain");
          getAssetLoader().loadModel("src/main/resources/models/human.glb", "human");
          getAssetLoader().loadModel("src/main/resources/models/smiler.glb", "smiler");
+         getAssetLoader().loadModel("src/main/resources/models/crab/scene.gltf", "crab");
 
 
-         getSceneManager().setActiveScene(new RoomsScene(this, "main_scene"));
+         getSceneManager().setActiveScene(new MainScene(this, "main_scene"));
      }
 }

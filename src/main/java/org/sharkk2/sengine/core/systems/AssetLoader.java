@@ -3,6 +3,10 @@ package org.sharkk2.sengine.core.systems;
 import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.animation.Animation;
+import org.sharkk2.sengine.core.classes.animation.Joint;
+import org.sharkk2.sengine.core.classes.animation.JointTransform;
+import org.sharkk2.sengine.core.classes.animation.Keyframe;
 import org.sharkk2.sengine.core.classes.exceptions.AssetNotFoundException;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 import org.joml.Matrix4f;
@@ -55,7 +59,15 @@ public class AssetLoader {
         this.engine = engine;
     }
 
-    private record CachedModel(CachedNode root, String directory, boolean flipUVs) {}
+    private static class CachedMesh {
+        float[] vertices, normals, uvs;
+        int[] indices;
+        int[] boneIds;
+        float[] boneWeights;
+        ModelComponent.Material material = new ModelComponent.Material();
+    }
+
+    private record CachedModel(CachedNode root, String directory, boolean flipUVs, Joint skeleton, List<Animation> animations) {}
 
     private static class CachedNode {
         String name;
@@ -64,11 +76,6 @@ public class AssetLoader {
         List<CachedNode> children = new ArrayList<>();
     }
 
-    private static class CachedMesh {
-        float[] vertices, normals, uvs;
-        int[] indices;
-        ModelComponent.Material material = new ModelComponent.Material();
-    }
 
     public void loadModel(String path, String id) {
         if (modelCache.containsKey(id)) {
@@ -76,7 +83,7 @@ public class AssetLoader {
             return;
         }
 
-        int flags = aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_OptimizeMeshes | aiProcess_CalcTangentSpace;
+        int flags = aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_OptimizeMeshes | aiProcess_CalcTangentSpace | aiProcess_LimitBoneWeights;
         AIScene aiScene = aiImportFile(path, flags);
 
         if (aiScene == null || (aiScene.mFlags() & AI_SCENE_FLAGS_INCOMPLETE) != 0 || aiScene.mRootNode() == null) {
@@ -86,13 +93,31 @@ public class AssetLoader {
 
         int lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
         String directory = (lastSlash >= 0) ? path.substring(0, lastSlash + 1) : "";
-
         int lastDot = path.lastIndexOf('.');
         String ext = (lastDot >= 0) ? path.substring(lastDot).toLowerCase() : "";
         boolean flipUVs = ext.equals(".gltf") || ext.equals(".glb");
 
-        CachedModel cachedModel = new CachedModel(new CachedNode(), directory, flipUVs);
-        processNode(aiScene.mRootNode(), aiScene, cachedModel.root, directory, flipUVs, id);
+        boolean hasSkeleton = aiScene.mNumAnimations() > 0;
+        if (!hasSkeleton && aiScene.mMeshes() != null) {
+            for (int i = 0; i < aiScene.mNumMeshes(); i++) {
+                if (AIMesh.create(aiScene.mMeshes().get(i)).mNumBones() > 0) {
+                    hasSkeleton = true;
+                    break;
+                }
+            }
+        }
+
+        Joint skeleton = null;
+        Map<String, Joint> jointsByName = null;
+        List<Animation> animations = new ArrayList<>();
+        if (hasSkeleton) {
+            jointsByName = new HashMap<>();
+            skeleton = buildJointHierarchy(aiScene.mRootNode(), jointsByName);
+            animations = extractAnimations(aiScene, jointsByName, skeleton);
+        }
+
+        CachedModel cachedModel = new CachedModel(new CachedNode(), directory, flipUVs, skeleton, animations);
+        processNode(aiScene.mRootNode(), aiScene, cachedModel.root(), directory, flipUVs, id, jointsByName);
 
         aiReleaseImport(aiScene);
         modelCache.put(id, cachedModel);
@@ -106,6 +131,28 @@ public class AssetLoader {
             throw new AssetNotFoundException("Couldn't find asset: " + id);
         }
         return buildGameObject(cachedModel.root);
+    }
+
+    private Joint buildJointHierarchy(AINode aiNode, Map<String, Joint> jointsByName) {
+        Matrix4f localTransform = convert(aiNode.mTransformation());
+        Joint joint = new Joint(jointsByName.size(), aiNode.mName().dataString(), localTransform);
+        jointsByName.put(joint.name, joint);
+
+        if (aiNode.mChildren() != null) {
+            for (int i = 0; i < aiNode.mNumChildren(); i++) {
+                joint.children.add(buildJointHierarchy(AINode.create(aiNode.mChildren().get(i)), jointsByName));
+            }
+        }
+        return joint;
+    }
+
+    private Matrix4f convert(AIMatrix4x4 t) {
+        return new Matrix4f(
+                t.a1(), t.b1(), t.c1(), t.d1(),
+                t.a2(), t.b2(), t.c2(), t.d2(),
+                t.a3(), t.b3(), t.c3(), t.d3(),
+                t.a4(), t.b4(), t.c4(), t.d4()
+        );
     }
 
 
@@ -122,10 +169,7 @@ public class AssetLoader {
 
         go.transform.setPosition(pos);
         go.transform.scale(scale);
-
-        Vector3f euler = new Vector3f();
-        rot.getEulerAnglesXYZ(euler); // returns radians
-        go.transform.transformRotation((float) Math.toDegrees(euler.x), (float) Math.toDegrees(euler.y), (float) Math.toDegrees(euler.z));
+        go.transform.rotate(rot);
         if (node.meshes.size() == 1) {
             go.attachComponent(createModelComponent(node.meshes.get(0)));
         } else if (node.meshes.size() > 1) {
@@ -142,13 +186,22 @@ public class AssetLoader {
     }
 
     private ModelComponent createModelComponent(CachedMesh cachedData) {
-        ModelComponent mc = new ModelComponent(cachedData.vertices, cachedData.normals, cachedData.uvs, cachedData.indices);
+        ModelComponent mc = new ModelComponent(cachedData.vertices, cachedData.normals, cachedData.uvs, cachedData.indices, cachedData.boneIds, cachedData.boneWeights);
         mc.material = cachedData.material;
         return mc;
     }
 
+    public Joint getSkeleton(String id) {
+        CachedModel cachedModel = modelCache.get(id);
+        return cachedModel != null ? cachedModel.skeleton() : null;
+    }
 
-    private void processNode(AINode aiNode, AIScene aiScene, CachedNode outNode, String directory, boolean flipUVs, String id) {
+    public List<Animation> getAnimations(String id) {
+        CachedModel cachedModel = modelCache.get(id);
+        return cachedModel != null ? cachedModel.animations() : Collections.emptyList();
+    }
+
+    private void processNode(AINode aiNode, AIScene aiScene, CachedNode outNode, String directory, boolean flipUVs, String id, Map<String, Joint> joints) {
         outNode.name = aiNode.mName().dataString();
 
         AIMatrix4x4 t = aiNode.mTransformation();
@@ -163,7 +216,7 @@ public class AssetLoader {
             IntBuffer meshIndices = aiNode.mMeshes();
             for (int i = 0; i < aiNode.mNumMeshes(); i++) {
                 AIMesh aiMesh = AIMesh.create(aiScene.mMeshes().get(meshIndices.get(i)));
-                outNode.meshes.add(processMesh(aiMesh, aiScene, directory, flipUVs, id));
+                outNode.meshes.add(processMesh(aiMesh, aiScene, directory, flipUVs, id, joints));
             }
         }
 
@@ -171,12 +224,12 @@ public class AssetLoader {
             for (int i = 0; i < aiNode.mNumChildren(); i++) {
                 CachedNode childNode = new CachedNode();
                 outNode.children.add(childNode);
-                processNode(AINode.create(aiNode.mChildren().get(i)), aiScene, childNode, directory, flipUVs, id);
+                processNode(AINode.create(aiNode.mChildren().get(i)), aiScene, childNode, directory, flipUVs, id, joints);
             }
         }
     }
 
-    private CachedMesh processMesh(AIMesh aiMesh, AIScene aiScene, String directory, boolean flipUVs, String id) {
+    private CachedMesh processMesh(AIMesh aiMesh, AIScene aiScene, String directory, boolean flipUVs, String id, Map<String, Joint> joints) {
         CachedMesh mesh = new CachedMesh();
         int vertexCount = aiMesh.mNumVertices();
 
@@ -216,6 +269,49 @@ public class AssetLoader {
             IntBuffer faceIndices = face.mIndices();
             for (int j = 0; j < face.mNumIndices(); j++) {
                 mesh.indices[idx++] = faceIndices.get(j);
+            }
+        }
+
+        if (joints != null && aiMesh.mNumBones() > 0) {
+            // so what we're tryna do here is take assimp's bone list and its weights and put them
+            // in the vertex data, so from each vertex we can tell what bones affect it and by how much
+            // asssimp just gives u a list of bones with each bone having a list of vertices it affects "and the weights" and we're trying
+            // to inverse that
+            mesh.boneIds = new int[vertexCount * ModelComponent.MAX_BONE_INFLUENCE];
+            mesh.boneWeights = new float[vertexCount * ModelComponent.MAX_BONE_INFLUENCE];
+
+            for (int b = 0; b < aiMesh.mNumBones(); b++) {
+                AIBone aiBone = AIBone.create(aiMesh.mBones().get(b));
+                Joint joint = joints.get(aiBone.mName().dataString());
+                if (joint == null) continue; // shouldn't happen
+                joint.inverseBindTransform = convert(aiBone.mOffsetMatrix());
+
+                AIVertexWeight.Buffer weights = aiBone.mWeights();
+                for (int w = 0; w < aiBone.mNumWeights(); w++) {
+                    AIVertexWeight vw = weights.get(w);
+                    int vId = vw.mVertexId();
+                    float weight = vw.mWeight();
+                    // find an untaken slot for the bone and its weight
+                    for (int slot = 0; slot < ModelComponent.MAX_BONE_INFLUENCE; slot++) {
+                        if (mesh.boneWeights[vId * ModelComponent.MAX_BONE_INFLUENCE + slot] == 0f) {
+                            mesh.boneIds[vId * ModelComponent.MAX_BONE_INFLUENCE + slot] = joint.id;
+                            mesh.boneWeights[vId * ModelComponent.MAX_BONE_INFLUENCE + slot] = weight;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // if a vertex was originally influenced by more than MAX_BONE_INFLUENCE then the total weights might not be a solid 1.0
+            // so we js go through them, divide each weight by their sum so they can all add up to 1
+            for (int v = 0; v < vertexCount; v++) {
+                float sum = 0f;
+                for (int slot = 0; slot < ModelComponent.MAX_BONE_INFLUENCE; slot++)
+                    sum += mesh.boneWeights[v * ModelComponent.MAX_BONE_INFLUENCE + slot];
+                if (sum > 0f) {
+                    for (int slot = 0; slot < ModelComponent.MAX_BONE_INFLUENCE; slot++)
+                        mesh.boneWeights[v * ModelComponent.MAX_BONE_INFLUENCE + slot] /= sum;
+                }
             }
         }
 
@@ -345,6 +441,90 @@ public class AssetLoader {
             return data;
         }
     }
+
+    private List<Animation> extractAnimations(AIScene aiScene, Map<String, Joint> jointsByName, Joint skeleton) {
+        List<Animation> animations = new ArrayList<>();
+        if (aiScene.mAnimations() == null) return animations;
+
+        for (int a = 0; a < aiScene.mNumAnimations(); a++) {
+            AIAnimation aiAnim = AIAnimation.create(aiScene.mAnimations().get(a));
+            double ticksPerSecond = aiAnim.mTicksPerSecond() != 0 ? aiAnim.mTicksPerSecond() : 25.0;
+
+            TreeSet<Double> times = new TreeSet<>();
+            for (int c = 0; c < aiAnim.mNumChannels(); c++) {
+                AINodeAnim channel = AINodeAnim.create(aiAnim.mChannels().get(c));
+                for (int k = 0; k < channel.mNumPositionKeys(); k++) times.add(channel.mPositionKeys().get(k).mTime());
+                for (int k = 0; k < channel.mNumRotationKeys(); k++) times.add(channel.mRotationKeys().get(k).mTime());
+            }
+
+            List<Keyframe> keyframes = new ArrayList<>();
+            for (double tick : times) {
+                JointTransform[] transforms = new JointTransform[jointsByName.size()];
+                for (Joint j : jointsByName.values()) transforms[j.id] = bindPoseTransform(j);
+
+                for (int c = 0; c < aiAnim.mNumChannels(); c++) {
+                    AINodeAnim channel = AINodeAnim.create(aiAnim.mChannels().get(c));
+                    Joint joint = jointsByName.get(channel.mNodeName().dataString());
+                    if (joint == null) continue;
+                    transforms[joint.id] = sampleChannel(channel, tick);
+                }
+                keyframes.add(new Keyframe((float) (tick / ticksPerSecond), Arrays.asList(transforms)));
+            }
+
+            float duration = (float) (aiAnim.mDuration() / ticksPerSecond);
+            animations.add(new Animation(aiAnim.mName().dataString(), duration, keyframes, skeleton));
+        }
+        return animations;
+    }
+
+    private JointTransform bindPoseTransform(Joint joint) {
+        Vector3f pos = new Vector3f();
+        Quaternionf rot = new Quaternionf();
+        joint.localBindTransform.getTranslation(pos);
+        joint.localBindTransform.getUnnormalizedRotation(rot);
+        return new JointTransform(pos, rot);
+    }
+
+    private JointTransform sampleChannel(AINodeAnim channel, double tick) {
+        return new JointTransform(samplePosition(channel, tick), sampleRotation(channel, tick));
+    }
+
+    private Vector3f samplePosition(AINodeAnim channel, double tick) {
+        int count = channel.mNumPositionKeys();
+        if (count == 0) return new Vector3f();
+        AIVectorKey.Buffer keys = channel.mPositionKeys();
+        if (count == 1 || tick <= keys.get(0).mTime()) return toVec3(keys.get(0).mValue());
+        if (tick >= keys.get(count - 1).mTime()) return toVec3(keys.get(count - 1).mValue());
+
+        for (int i = 0; i < count - 1; i++) {
+            AIVectorKey a = keys.get(i), b = keys.get(i + 1);
+            if (tick >= a.mTime() && tick <= b.mTime()) {
+                float t = (float) ((tick - a.mTime()) / (b.mTime() - a.mTime()));
+                return toVec3(a.mValue()).lerp(toVec3(b.mValue()), t);
+            }
+        }
+        return toVec3(keys.get(count - 1).mValue());
+    }
+
+    private Quaternionf sampleRotation(AINodeAnim channel, double tick) {
+        int count = channel.mNumRotationKeys();
+        if (count == 0) return new Quaternionf();
+        AIQuatKey.Buffer keys = channel.mRotationKeys();
+        if (count == 1 || tick <= keys.get(0).mTime()) return toQuat(keys.get(0).mValue());
+        if (tick >= keys.get(count - 1).mTime()) return toQuat(keys.get(count - 1).mValue());
+
+        for (int i = 0; i < count - 1; i++) {
+            AIQuatKey a = keys.get(i), b = keys.get(i + 1);
+            if (tick >= a.mTime() && tick <= b.mTime()) {
+                float t = (float) ((tick - a.mTime()) / (b.mTime() - a.mTime()));
+                return toQuat(a.mValue()).slerp(toQuat(b.mValue()), t);
+            }
+        }
+        return toQuat(keys.get(count - 1).mValue());
+    }
+
+    private Vector3f toVec3(AIVector3D v) { return new Vector3f(v.x(), v.y(), v.z()); }
+    private Quaternionf toQuat(AIQuaternion q) { return new Quaternionf(q.x(), q.y(), q.z(), q.w()); }
 
     private int uploadPixels(ByteBuffer data, int width, int height, int flags) {
         boolean blended = (flags & TEXTURE_BLENDED) != 0;
