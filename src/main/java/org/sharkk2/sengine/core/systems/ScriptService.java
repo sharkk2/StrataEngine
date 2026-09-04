@@ -1,9 +1,13 @@
 package org.sharkk2.sengine.core.systems;
 
+import org.luaj.vm2.Globals;
+import org.luaj.vm2.LuaError;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.LuaScript;
 import org.sharkk2.sengine.core.systems.components.ScriptComponent;
+
 
 public class ScriptService {
     private final Engine engine;
@@ -27,6 +31,17 @@ public class ScriptService {
             return false;
         }
         return true;
+    }
+
+    public boolean executeScript(LuaScript script) {
+            if (script==null) return false;
+            try {
+                script.getChunk().call(); return true;
+            } catch (LuaError e) {
+                Logger.error("Lua script (" + script.name + ") error: " + e.getMessage());
+                script.registerError(e.getMessage());
+            }
+            return false;
     }
 
 }

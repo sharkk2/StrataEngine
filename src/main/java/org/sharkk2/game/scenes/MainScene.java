@@ -5,7 +5,9 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.LuaScript;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.components.*;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -23,6 +25,8 @@ public class MainScene extends Scene {
 
     @Override
     protected void onLoad() {
+        environment.sky.moonTexture = engine.getAssetLoader().loadTexture("src/main/resources/textures/moon.png", TEXTURE_BLENDED);
+        environment.sky.weather = Sky.SkyWeather.OVERCAST;
         GameObject skybox = new GameObject(engine);
         int cubetex = engine.getAssetLoader().loadCubeMapTexture(new String[]{
                 "skybox/right.jpg",
@@ -32,9 +36,7 @@ public class MainScene extends Scene {
                 "skybox/front.jpg",
                 "skybox/back.jpg"
         });
-        skybox.attachComponent(new SkyboxComponent(engine));
         addObject(skybox);
-        environment.setActiveSkybox(skybox);
         GameObject sponza = engine.getAssetLoader().getModel("sponza");
         sponza.transform.scale(1.5f, 1.5f, 1.5f);
         addObject(sponza);
@@ -58,95 +60,29 @@ public class MainScene extends Scene {
         player.setName("player");
         player.transform.scale(0.001f);
         player.cascade(ModelComponent.class, (mc) -> {
-            mc.visible = false;
+            flight.addShadowExclusion(mc);
+            mc.setVisible(false);
             mc.getOwner().attachComponent(new ColliderComponent(mc.bounds));
         });
         CameraComponent cam = new CameraComponent();
         engine.getCameraService().setPrimaryCamera(cam);
+        cam.setLensDirtTexture(engine.getAssetLoader().loadTexture("src/main/resources/textures/DirtMaskTex.png", TEXTURE_BLENDED));
         player.attachComponent(cam);
 
         player.attachComponent(new PlayerController());
         player.attachComponent(flight);
-        float[] flickerTimers = {10.0f + new Random().nextFloat() * 5.0f, 0.0f};
-        int[] flickerPulsesRemaining = {0};
-        Random flickerRandom = new Random();
-        Vector3f defaultOffset = new Vector3f(flight.offset);
-        Vector3f currentOffset = new Vector3f(flight.offset);
 
-        player.attachComponent(new ScriptComponent((ctx) -> {
-            Boolean enabled = ctx.readState("enabled");
-            Float currentIntensity = ctx.readState("currentIntensity");
-            Float currentFov = ctx.readState("currentFov");
-            Float defaultFov = ctx.readState("defaultFov");
-            Map<Integer, Vector3f> dirs = ctx.readState("dirs");
-            if (enabled == null) {
-                dirs = new HashMap<>();
-                ctx.state("enabled", true);
-                ctx.state("currentIntensity", flight.intensity);
-                ctx.state("currentFov", cam.getFov());
-                ctx.state("defaultFov", cam.getFov());
-                ctx.state("dirs", dirs);
-                enabled = true;
-                currentIntensity = flight.intensity;
-                defaultFov = cam.getFov();
-                currentFov = cam.getFov();
-            }
+        engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
+        engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
 
-            float dt = engine.getDeltaTime();
-            if (engine.getInputService().isKeyPressed(GLFW_KEY_F)) {
-                ctx.state("enabled", !enabled);
-                enabled = !enabled;
-            }
+        LuaScript flashlightScript = engine.getAssetLoader().loadLuaScript("src/main/java/org/sharkk2/game/scripts/flashlight.lua", "flashScript");
+        flashlightScript.passObject(flight, "flashlight");
+        flashlightScript.passObject(cam, "cam");
+        flashlightScript.enableHotReloads(true, engine);
+        flashlightScript.supressErrors = true;
+        player.attachComponent(new ScriptComponent(flashlightScript));
 
-            boolean rightClickHeld = engine.getInputService().isMouseDown(GLFW_MOUSE_BUTTON_RIGHT);
-            currentOffset.lerp(rightClickHeld ? new Vector3f() : defaultOffset, Math.min(1.0f, dt * 10.0f));
-            flight.offset.set(currentOffset);
 
-            float targetFov = rightClickHeld ? defaultFov - 5.0f : defaultFov;
-            currentFov += (targetFov - currentFov) * Math.min(1.0f, dt * 10.0f);
-            cam.setFov(currentFov);
-            ctx.state("currentFov", currentFov);
-
-            dirs.put(engine.getTotalFrameCount(), cam.getDirection());
-            Vector3f pastDir = dirs.get(Math.max(engine.getTotalFrameCount() - 25, 0));
-            if (pastDir != null) {
-                flight.spotLightDirection.set(pastDir.x, pastDir.y - 0.1f, pastDir.z).normalize();
-                dirs.remove(engine.getTotalFrameCount() - 25);
-            }
-            ctx.state("dirs", dirs);
-
-            float targetIntensity = enabled ? 7.0f : 0.0f;
-            ctx.state("currentIntensity", currentIntensity += (targetIntensity - currentIntensity) * Math.min(1.0f, dt * 10.0f));
-            float outputIntensity = currentIntensity;
-
-            if (enabled) {
-                if (flickerPulsesRemaining[0] > 0) {
-                    flickerTimers[1] -= dt;
-                    if (flickerTimers[1] <= 0.0f) {
-                        flickerTimers[1] = 0.03f + flickerRandom.nextFloat() * 0.06f;
-                        flickerPulsesRemaining[0]--;
-                    }
-                    if (flickerPulsesRemaining[0] % 2 == 0) {
-                        outputIntensity = 0.0f;
-                    }
-                } else {
-                    flickerTimers[0] -= dt;
-                    if (flickerTimers[0] <= 0.0f) {
-                        flickerTimers[0] = 10.0f + flickerRandom.nextFloat() * 5.0f;
-                        flickerPulsesRemaining[0] = 1 + flickerRandom.nextInt(4);
-                    }
-                }
-            }
-
-            flight.intensity = outputIntensity;
-        }));
-
-        GameObject secondaryCam = new GameObject(engine);
-        secondaryCam.setName("secondaryCam");
-        CameraComponent secCam = new CameraComponent();
-        secondaryCam.attachComponent(secCam);
-        secondaryCam.transform.setPosition(-11.9f, 17.7f, -0.4f);
-        addObject(secondaryCam);
 
 
         GameObject sphere = new GameObject(engine);
@@ -185,7 +121,8 @@ public class MainScene extends Scene {
 
         GameObject glight = new GameObject(engine);
         LightComponent light = lights.createLight(LightComponent.LightType.POINT_LIGHT);
-        light.intensity = 6;
+        light.intensity = 2;
+        light.castShadow = true;
         glight.transform.setPosition(4, 23, 0);
         glight.attachComponent(light);
         engine.getDebugger().visualizeLight(glight, true);
@@ -233,29 +170,7 @@ public class MainScene extends Scene {
         gridie.transform.scale(2);
         addObject(gridie);
 
-        GameObject flashLight = engine.getAssetLoader().getModel("flashlight");
-        flashLight.setName("flashlight");
-        LightComponent cubielightComp = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
-        cubielightComp.intensity = 4;
-        cubielightComp.range = 5;
-        cubielightComp.color.set(
-                224f / 255f,
-                223f / 255f,
-                121f / 255f
-        );
-        cubielightComp.spotLightDirection.set(new Vector3f(1, -0.7f, 1));
-        flashLight.transform.setPosition(28, 30.6f, 27);
-        flashLight.transform.rotate(-10, 143f, 0);
-        flashLight.transform.scale(0.04f);
-        flashLight.attachComponent(cubielightComp);
-        cubielightComp.offset.set(0, 0.6, 0);
-        flashLight.cascade(ModelComponent.class, (mc) -> {
-            if (mc != null && (mc.material.emissiveTex != -1 || mc.material.emissive.length()!=0)) {
-                mc.material.emissiveStrength = 5;
-            }
-        });
 
-        addObject(flashLight);
 
         GameObject sword = engine.getAssetLoader().getModel("sword");
         sword.transform.setPosition(3, 24, -8);
@@ -278,7 +193,24 @@ public class MainScene extends Scene {
         brickawll.transform.setPosition(3, 24, -11);
         addObject(brickawll);
 
+        GameObject crab = engine.getAssetLoader().getModel("crab");
+        addObject(crab);
+        crab.transform.setPosition(41, 3, 45);
+        AnimationComponent animation = new AnimationComponent(engine.getAssetLoader().getAnimations("crab"));
+        crab.attachComponent(animation);
+        animation.animationSpeed = 3;
+        animation.play("Dance");
 
+        GameObject sharkk2 = engine.getAssetLoader().getModel("real_shark");
+        addObject(sharkk2);
+        sharkk2.transform.setPosition(13, 12, 1);
+        sharkk2.cascade(ModelComponent.class, (mc) -> {
+            mc.material.metalnessTex = -1;
+            mc.material.metalness = 0.3f;
+        });
+        AnimationComponent animation2 = new AnimationComponent(engine.getAssetLoader().getAnimations("real_shark"));
+        sharkk2.attachComponent(animation2);
+        animation2.play("Action");
 
         spawnPoints.add(new Vector3f(5,26,5));
         lights.globalLight.intensity = 10;

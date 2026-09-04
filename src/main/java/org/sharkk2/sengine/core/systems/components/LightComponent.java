@@ -5,14 +5,19 @@ import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
+import org.sharkk2.sengine.core.classes.CubeShadowMap;
+import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.ShadowMap;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.lwjgl.opengl.GL43.*;
 
 public class LightComponent extends Component {
     public enum LightType {SPOT_LIGHT, POINT_LIGHT};
+    public enum ShadowQuality {LOW, MEDIUM, HIGH};
     public final LightType type;
     public final Vector3f offset = new Vector3f(0,0,0);
     public final Vector3f color = new Vector3f(1,1,1);
@@ -25,21 +30,40 @@ public class LightComponent extends Component {
     public float spotLightInnerCutoff = 0.966f;
     public float spotLightOuterCutoff = 0.866f;
     public int lightCookieTex = -1;
-    public ShadowMap spotLightShadowMap = new ShadowMap(ShadowMap.ShadowQuality.MEDIUM);
+    public ShadowMap spotLightShadowMap = new ShadowMap(ShadowQuality.MEDIUM);
+    public CubeShadowMap pointLightShadowMap = new CubeShadowMap(ShadowQuality.MEDIUM);
+    private List<ModelComponent> shadowCastingExclusions = new ArrayList<>();
     public boolean castShadow = false;
+    public boolean bakeShadows = false;
     private final Matrix4f lightView = new Matrix4f();
     private final Matrix4f lightProj = new Matrix4f();
     private final Vector3f up = new Vector3f(0,1,0);
     private final Vector3f target = new Vector3f();
+    private final Matrix4f[] cubeLightSpace = {
+            new Matrix4f(), new Matrix4f(), new Matrix4f(),
+            new Matrix4f(), new Matrix4f(), new Matrix4f()
+    };
+
+    private static final Vector3f[] CUBE_DIRS = {
+            new Vector3f( 1,0,0), new Vector3f(-1,  0,  0), // +X, -X
+            new Vector3f( 0,1,0), new Vector3f( 0, -1,  0), // +Y, -Y
+            new Vector3f( 0,0,1), new Vector3f( 0,  0, -1)  // +Z, -Z
+    };
+    private static final Vector3f[] CUBE_UPS = {
+            new Vector3f(0,-1,0), new Vector3f(0,-1,0),
+            new Vector3f(0,0,1), new Vector3f(0,0,-1),
+            new Vector3f(0,-1,0), new Vector3f(0,-1,0)
+    };
 
     public Matrix4f calcLightSpace() {
         if (getOwner() == null) {
             Logger.error("Unable to find owner for light component (" + this.getID() + ") to calculate light space");
             return null;
         }
+
         float fovY = (float)(2.0 * Math.acos(spotLightOuterCutoff));
         lightProj.identity().perspective(fovY, 1.0f, 0.1f, range);
-        Vector3f pos = getOwner().transform.getPosition();
+        Vector3f pos = getOwner().transform.getPosition().add(offset, new Vector3f());
         target.set(pos).add(spotLightDirection);
         Vector3f upVec = Math.abs(spotLightDirection.y) < 0.999f ? up : new Vector3f(1, 0, 0);
         lightView.identity().lookAt(pos, target, upVec);
@@ -47,11 +71,39 @@ public class LightComponent extends Component {
         return lightProj;
     }
 
-
+    public Matrix4f[] calcLightSpaceCube() {
+        if (getOwner() == null) {
+            Logger.error("Unable to find owner for light component (" + this.getID() + ") to calculate light space");
+            return null;
+        }
+        Vector3f pos = getOwner().transform.getPosition().add(offset, new Vector3f());
+        for (int face = 0; face < 6; face++) {
+            target.set(pos).add(CUBE_DIRS[face]);
+            lightView.identity().lookAt(pos, target, CUBE_UPS[face]);
+            cubeLightSpace[face].identity()
+                    .perspective((float) Math.toRadians(90.0), 1.0f, 0.1f, range)
+                    .mul(lightView);
+        }
+        return cubeLightSpace;
+    }
 
     public LightComponent(LightType type) {
         this.type = type;
     }
+
+    public void setShadowQuality(ShadowQuality quality) {
+        this.spotLightShadowMap = new ShadowMap(quality);
+        this.pointLightShadowMap = new CubeShadowMap(quality);
+    }
+
+    public void addShadowExclusion(ModelComponent model) {
+        if (isShadowExcluded(model)) return;
+        shadowCastingExclusions.add(model);
+    }
+
+    public void removeShadowExclusion(ModelComponent model) {shadowCastingExclusions.remove(model);}
+    public boolean isShadowExcluded(ModelComponent model) {return shadowCastingExclusions.contains(model);}
+
 
     @Override
     protected void onObjectAttach() {

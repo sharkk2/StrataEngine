@@ -5,11 +5,9 @@ import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.Logger;
-import org.sharkk2.sengine.core.classes.AudioListener;
-import org.sharkk2.sengine.core.classes.Color;
-import org.sharkk2.sengine.core.classes.GameObject;
-import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.*;
 import org.sharkk2.sengine.core.systems.AudioService;
+import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.components.*;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -27,10 +25,8 @@ public class RoomsScene extends Scene {
     @Override
     protected void onLoad() {
         GameObject skybox = new GameObject(engine);
-        skybox.attachComponent(new SkyboxComponent(engine));
         addObject(skybox);
 
-        environment.setActiveSkybox(skybox);
 
         LightComponent flashlight = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
         flashlight.spotLightInnerCutoff = 0.982f;
@@ -45,89 +41,30 @@ public class RoomsScene extends Scene {
         player.transform.scale(0.001f);
         player.transform.transformPos(0, 1, 0);
         player.cascade(ModelComponent.class, (mc) -> {
-            mc.visible = false;
+            mc.setVisible(false);
+            flashlight.addShadowExclusion(mc);
             mc.getOwner().attachComponent(new ColliderComponent(mc.bounds));
         });
         CameraComponent cam = new CameraComponent();
         engine.getCameraService().setPrimaryCamera(cam);
         player.attachComponent(cam);
         cam.name = "niggacam";
+
+        cam.setColorGradingLUT(engine.getAssetLoader().loadLutTexture("src/main/resources/textures/luts/backrooms-colors.cube"));
+        cam.setLensDirtTexture(engine.getAssetLoader().loadTexture("src/main/resources/textures/DirtMaskTex.png", TEXTURE_BLENDED));
+
         player.attachComponent(new PlayerController());
         player.attachComponent(flashlight);
-        float[] flickerTimers = {10.0f + new Random().nextFloat() * 5.0f, 0.0f};
-        int[] flickerPulsesRemaining = {0};
-        Random flickerRandom = new Random();
-        Vector3f defaultOffset = new Vector3f(flashlight.offset);
-        Vector3f currentOffset = new Vector3f(flashlight.offset);
-        player.attachComponent(new ScriptComponent((ctx) -> {
-            Boolean enabled = ctx.readState("enabled");
-            Float currentIntensity = ctx.readState("currentIntensity");
-            Float currentFov = ctx.readState("currentFov");
-            Float defaultFov = ctx.readState("defaultFov");
-            Map<Integer, Vector3f> dirs = ctx.readState("dirs");
-            if (enabled == null) {
-                dirs = new HashMap<>();
-                ctx.state("enabled", true);
-                ctx.state("currentIntensity", flashlight.intensity);
-                ctx.state("currentFov", cam.getFov());
-                ctx.state("defaultFov", cam.getFov());
-                ctx.state("dirs", dirs);
-                enabled = true;
-                currentIntensity = flashlight.intensity;
-                defaultFov = cam.getFov();
-                currentFov = cam.getFov();
-            }
-
-            float dt = engine.getDeltaTime();
-            if (engine.getInputService().isKeyPressed(GLFW_KEY_F)) {
-                ctx.state("enabled", !enabled);
-                enabled = !enabled;
-            }
-
-            boolean rightClickHeld = engine.getInputService().isMouseDown(GLFW_MOUSE_BUTTON_RIGHT);
-            currentOffset.lerp(rightClickHeld ? new Vector3f() : defaultOffset, Math.min(1.0f, dt * 10.0f));
-            flashlight.offset.set(currentOffset);
-
-            float targetFov = rightClickHeld ? defaultFov - 5.0f : defaultFov;
-            currentFov += (targetFov - currentFov) * Math.min(1.0f, dt * 10.0f);
-            cam.setFov(currentFov);
-            ctx.state("currentFov", currentFov);
-
-            dirs.put(engine.getTotalFrameCount(), cam.getDirection());
-            Vector3f pastDir = dirs.get(Math.max(engine.getTotalFrameCount() - 25, 0));
-            if (pastDir != null) {
-                flashlight.spotLightDirection.set(pastDir.x, pastDir.y - 0.1f, pastDir.z).normalize();
-                dirs.remove(engine.getTotalFrameCount() - 25);
-            }
-            ctx.state("dirs", dirs);
-
-            float targetIntensity = enabled ? 7.0f : 0.0f;
-            ctx.state("currentIntensity", currentIntensity += (targetIntensity - currentIntensity) * Math.min(1.0f, dt * 10.0f));
-            float outputIntensity = currentIntensity;
-
-            if (enabled) {
-                if (flickerPulsesRemaining[0] > 0) {
-                    flickerTimers[1] -= dt;
-                    if (flickerTimers[1] <= 0.0f) {
-                        flickerTimers[1] = 0.03f + flickerRandom.nextFloat() * 0.06f;
-                        flickerPulsesRemaining[0]--;
-                    }
-                    if (flickerPulsesRemaining[0] % 2 == 0) {
-                        outputIntensity = 0.0f;
-                    }
-                } else {
-                    flickerTimers[0] -= dt;
-                    if (flickerTimers[0] <= 0.0f) {
-                        flickerTimers[0] = 10.0f + flickerRandom.nextFloat() * 5.0f;
-                        flickerPulsesRemaining[0] = 1 + flickerRandom.nextInt(4);
-                    }
-                }
-            }
-
-            flashlight.intensity = outputIntensity;
-        }));
+        LuaScript flashlightScript = engine.getAssetLoader().loadLuaScript("src/main/java/org/sharkk2/game/scripts/flashlight.lua", "flashScript");
+        flashlightScript.passObject(flashlight, "flashlight");
+        flashlightScript.passObject(cam, "cam");
+        flashlightScript.enableHotReloads(true, engine);
+        flashlightScript.supressErrors = true;
+        player.attachComponent(new ScriptComponent(flashlightScript));
         addObject(player);
 
+        engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
+        engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
 
 
         // 41 0.2 49
@@ -173,6 +110,12 @@ public class RoomsScene extends Scene {
         audio.maxDistance = 10;
         object.attachComponent(audio);
         object.transform.transformPos(0, 1, 2);
+
+        LuaScript luaScript = engine.getAssetLoader().loadLuaScript("src/main/java/org/sharkk2/game/scripts/ewwlua.lua", "testScript");
+        ScriptComponent script = new ScriptComponent(luaScript);
+        object.attachComponent(script);
+
+
         addObject(object);
 
         GameObject listenerr = new GameObject(engine);
@@ -202,7 +145,9 @@ public class RoomsScene extends Scene {
                 pl.color.set(mc.material.emissive).normalize();
                 pl.range = 20;
                 pl.intensity = 3;
-                pl.offset.set(0, -3, 0);
+                pl.castShadow = true;
+                pl.bakeShadows = true;
+                pl.offset.set(0, -1, 0);
                 mc.getOwner().attachComponent(pl);
             }
 
@@ -221,29 +166,18 @@ public class RoomsScene extends Scene {
         addObject(human);
 
 
-        GameObject crab = engine.getAssetLoader().getModel("crab");
-        addObject(crab);
-        crab.transform.setPosition(41, 0, 45);
-        AnimationComponent animation = new AnimationComponent(engine.getAssetLoader().getAnimations("crab"));
-        crab.attachComponent(animation);
-        animation.animationSpeed = 3;
-        animation.play("Dance");
 
-
-        environment.fog.density = 0.01f;
         environment.fog.color.set(new Color(10, 10, 4).normalized());
 //106, 215, 230
 
         lights.globalLight.direction.set(1,1,1);
         lights.globalLight.enabled = false;
-        lights.globalLight.ambient.set(0.2f, 0.2f, 0.2f);
-        doDayCycle = false;
+        lights.globalLight.ambient.set(0.03f, 0.03f, 0.02f);
+        lights.globalLight.intensity = 1;
 
         engine.setValue("exposure", 1.3f);
         engine.setValue("saturation", 0.9f);
 
-        int lut = engine.getAssetLoader().loadLutTexture("src/main/resources/textures/luts/backrooms-colors.cube");
-        engine.getRenderer().getPostProcessor().setColorGradingLUT(lut);
     }
 
 
@@ -254,6 +188,7 @@ public class RoomsScene extends Scene {
         if (!backpacks.isEmpty()) {
             logHierarchy(backpacks.getFirst());
         }*/
+        environment.fog.color = lights.globalLight.ambient;
     }
 
     @Override

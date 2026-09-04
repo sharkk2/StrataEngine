@@ -21,7 +21,7 @@ public class ColliderComponent extends Component {
     public Vector3f testCollision(Bounds other) {
         // https://dyn4j.org/2010/01/sat/
         // "If, for all axes, the shape's projections overlap, then we can conclude that the shapes are intersecting."
-        // !warning: this method can be a pressure point on the GC
+        // !warning: this method can be a pressure point on the GC, fix that later
 
         if (!quickOverlap(other)) return null; // cheap AABB reject
 

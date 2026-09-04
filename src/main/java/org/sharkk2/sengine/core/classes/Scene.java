@@ -2,18 +2,14 @@ package org.sharkk2.sengine.core.classes;
 
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
-import org.sharkk2.game.Game;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
-import org.sharkk2.sengine.core.Helpers;
 import org.sharkk2.sengine.core.systems.ScriptService;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
-import org.sharkk2.sengine.core.systems.components.SkyboxComponent;
+import org.sharkk2.sengine.core.systems.ShaderService;
 
 import java.util.*;
-
-import static org.lwjgl.glfw.GLFW.glfwGetTime;
 
 public abstract class Scene {
     protected final Map<UUID, GameObject> objects = new HashMap<>();
@@ -26,35 +22,79 @@ public abstract class Scene {
     public Lights lights = new Lights();
     public Environment environment = new Environment();
     public List<Vector3f> spawnPoints = new ArrayList<>();
-    private double sceneTime;
-    public boolean doDayCycle = false;
-    public int cycleLengthMillis = 240000;
+    public long sceneLoadTimeMillis;
+    private ArrayDeque<GameObject> toAddQueue = new ArrayDeque<>();
+    private ArrayDeque<UUID> toRemoveQueue = new ArrayDeque<>();
 
 
 
     public static class Environment {
         public Fog fog = new Fog();
-        public GameObject activeSkybox;
-        public boolean skyboxEnabled = true;
-        public void setActiveSkybox(GameObject skybox) {
-            if (!skybox.hasComponent(SkyboxComponent.class)) {
-                Logger.warning("Object \"" + skybox.getName() + "\" has no skybox component");
-                return;
-            }
-
-            this.activeSkybox = skybox;
-        }
+        public Sky sky = new Sky();
     }
 
     public static class Fog {
         public enum FogMode {LINEAR, QUADRATIC}
-        public Vector3f color = new Vector3f(1,1,1);
-        public float density = 0.001f;
+        public Vector3f color = new Vector3f(0.1f,0.1f, 0.1f);
+        public float density = 0.005f;
         public float start = 10;
         public float end = 100f;
         public boolean enabled = true;
-        public boolean blendSkyColor = false;
+        public boolean blendSkyColor = true;
         public FogMode mode = FogMode.QUADRATIC;
+    }
+
+    public static class Sky {
+        public boolean enabled = true;
+        public enum SkyMode {CUBEMAP, PROCEDURAL}
+        public enum SkyWeather {CLEAR, PARTLY_CLOUDY, CLOUDY, OVERCAST}
+        private SkyMode mode = SkyMode.PROCEDURAL;
+        private int cubemapTex = -1;
+        /**Effective only in procedural mode*/
+        public boolean showMoon = true;
+        /**Effective only in procedural mode*/
+        public int moonTexture = -1;
+        /**Effective only in procedural mode*/
+        public boolean showSun = true;
+        /**Effective only in procedural mode*/
+        public boolean clouds = true;
+        /**Effective only in procedural mode*/
+        public boolean stars = true;
+        /**Effective only in procedural mode*/
+        public SkyWeather weather = SkyWeather.CLEAR;
+        /**Effective only in procedural mode*/
+        public final Vector3f sunDirection = new Vector3f(0, -1, 0);
+        /**Effective only in procedural mode*/
+        public final Vector3f moonDirection = new Vector3f(0, 1, 0);
+        /**Effective only in procedural mode*/
+        public int dayTime = 0;
+        /**Effective only in procedural mode (seconds)*/
+        public int dayLengthSeconds = 2400;
+        /**Effective only in procedural mode*/
+        public boolean dayTimeEffect = true;
+        public ShaderService.Shader customShader = null;
+
+
+        public SkyMode getMode() {return mode;}
+        public int getCubemapTex() {return cubemapTex;}
+        public void makeProcedural() {mode = SkyMode.PROCEDURAL;}
+        public void makeCubeMapped(int cubemapTex) {
+            if (cubemapTex < 0) return;
+            this.cubemapTex = cubemapTex;
+            this.mode = SkyMode.CUBEMAP;
+        }
+
+        public void calculateDirections() {
+            if (dayLengthSeconds <= 0) return;
+
+            float t = Math.floorMod(dayTime, dayLengthSeconds) / (float) dayLengthSeconds;
+            float sunAngle = (t - 0.25f) * (float) (Math.PI * 2.0);
+
+            float sunX = (float) Math.cos(sunAngle);
+            float sunY = (float) Math.sin(sunAngle);
+            sunDirection.set(sunX, sunY, 0f).normalize();
+            moonDirection.set(sunDirection).negate();
+        }
     }
 
     public static class Lights {
@@ -79,11 +119,11 @@ public abstract class Scene {
     public static class GlobalSceneLight {
         public Vector3f direction = new Vector3f(-0.15f, -1.0f, 0.1f).normalize();
         public Vector3f color = new Vector3f(1.0f, 0.96f, 0.88f);
-        public Vector3f ambient = new Vector3f(0.1f, 0.1f, 0.1f);
-        public float intensity = 2.5f;
+        public Vector3f ambient = new Vector3f(0.3f, 0.3f, 0.3f);
+        public float intensity = 1.5f;
 
         public boolean castShadow = true;
-        public ShadowMap shadowMap = new ShadowMap(ShadowMap.ShadowQuality.HIGH);
+        public ShadowMap shadowMap = new ShadowMap(LightComponent.ShadowQuality.HIGH);
         private final Matrix4f lightView = new Matrix4f();
         private final Matrix4f lightProj = new Matrix4f();
         private final Vector3f up = new Vector3f(0,1,0);
@@ -95,7 +135,7 @@ public abstract class Scene {
             float size = engine.getValue("shadows.distance");
             lightProj.identity().ortho(-size, size, -size, size, 1f, 300f);
             target.set(engine.getCameraService().getPrimaryCamera().getOwner().transform.getPosition());
-            float texelSize = (size * 2f) / shadowMap.width;
+            float texelSize = (size * 2f) / shadowMap.size;
             target.x = (float)(Math.floor(target.x / texelSize) * texelSize);
             target.z = (float)(Math.floor(target.z / texelSize) * texelSize);
             lightPos.set(direction).mul(-90f).add(target);
@@ -124,32 +164,25 @@ public abstract class Scene {
             return;
         }
         onLoad();
+        sceneLoadTimeMillis = System.currentTimeMillis();
         loaded = true;
     }
 
 
-    private void applySceneTime(double time) {
-        this.sceneTime = time;
-        double angle = sceneTime * Math.PI * 2.0;
-        lights.globalLight.direction.set(-0.3f, (float) -Math.sin(angle), (float) Math.cos(angle)).normalize();
-        float sunHeight = -lights.globalLight.direction.y;
-        float sunVisibility = Math.max(0.0f, Math.min(1.0f, sunHeight * 4.0f));
-        lights.globalLight.enabled = sunVisibility > 0.0f;
-        lights.globalLight.ambient.set(
-                0.03f + 0.005 * sunVisibility,
-                0.03f + 0.005f * sunVisibility,
-                0.04f + 0.01f * sunVisibility
-        );
-    }
 
-    public void setTime(double time) {
-        applySceneTime(time);
-    }
 
     public final void tick() {
-        if (doDayCycle) {
-            double elapsedMs = glfwGetTime() * 1000.0;
-            applySceneTime((elapsedMs % cycleLengthMillis) / cycleLengthMillis);
+        while (!toAddQueue.isEmpty()){
+            GameObject qo = toAddQueue.pop();
+            GameObject previous = objects.put(qo.id, qo);
+            if (previous != null) unindexName(previous);
+            indexName(qo);
+        }
+
+        while (!toRemoveQueue.isEmpty()) {
+            UUID uid = toRemoveQueue.pop();
+            GameObject removed = objects.remove(uid);
+            if (removed != null) unindexName(removed);
         }
 
         for (GameObject object : objects.values()) {
@@ -172,6 +205,10 @@ public abstract class Scene {
     }
 
     public void addObject(GameObject object) {
+        if (isLoaded()) {
+            toAddQueue.add(object);
+            return;
+        }
         GameObject previous = objects.put(object.id, object);
         if (previous != null) unindexName(previous);
         indexName(object);
@@ -180,6 +217,10 @@ public abstract class Scene {
     public int objectCount() {return objects.size();}
 
     public void addObjects(List<GameObject> objcts) {
+        if (isLoaded()) {
+            toAddQueue.addAll(objcts);
+            return;
+        }
         for (GameObject go : objcts) addObject(go);
     }
 
@@ -198,9 +239,21 @@ public abstract class Scene {
     public void removeObject(GameObject object) {removeObject(object.id);}
 
     public GameObject removeObject(UUID id) {
+        if (isLoaded()) {
+            toRemoveQueue.add(id);
+            return objects.get(id);
+        }
         GameObject removed = objects.remove(id);
         if (removed != null) unindexName(removed);
         return removed;
+    }
+
+    public void removeObjects(List<GameObject> objs) {
+        for (GameObject go : objs) {removeObject(go);}
+    }
+
+    public void removeObjects(UUID[] ids) {
+        for (UUID uuid : ids) {removeObject(uuid);}
     }
 
     public List<GameObject> getObjects() {return new ArrayList<>(objects.values());}
@@ -265,6 +318,5 @@ public abstract class Scene {
     public Engine getEngine() {return engine;}
     public String getName() {return name;}
     public boolean isLoaded() {return loaded;}
-    public double getSceneDayTime() {return sceneTime;}
 
 }

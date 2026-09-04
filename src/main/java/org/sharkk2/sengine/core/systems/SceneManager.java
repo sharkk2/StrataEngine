@@ -1,6 +1,7 @@
 package org.sharkk2.sengine.core.systems;
 
 import org.sharkk2.sengine.Engine;
+import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Scene;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 
@@ -15,9 +16,14 @@ public class SceneManager {
     }
 
     public void setActiveScene(Scene scene) {
+        setActiveScene(scene, true);
+    }
+
+    public void setActiveScene(Scene scene, boolean load) {
         if (activeScene != null) {activeScene.destroy();}
+
         activeScene = scene;
-        activeScene.load();
+        if (load) activeScene.load();
         if (!activeScene.spawnPoints.isEmpty() && engine.getCameraService().getPrimaryCamera() != null) {
             CameraComponent cam = engine.getCameraService().getPrimaryCamera();
             if (cam.getOwner() != null) {
@@ -27,14 +33,7 @@ public class SceneManager {
             }
         }
         if (!scenes.containsKey(scene.id)) scenes.put(scene.id, scene);
-    }
-
-    public void setActiveScene(Scene scene, boolean load) {
-        if (activeScene != null) {activeScene.destroy();}
-
-        activeScene = scene;
-        if (load) activeScene.load();
-        if (!scenes.containsKey(scene.id)) scenes.put(scene.id, scene);
+        Logger.info("Set active scene to (" + scene.getName() + ")");
     }
 
     public void addScene(Scene scene, boolean load) {

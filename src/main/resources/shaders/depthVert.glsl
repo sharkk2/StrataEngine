@@ -11,8 +11,10 @@ layout(std430, binding = 3) readonly buffer BoneMatrices {
 
 uniform mat4 spaceMatrix;
 uniform mat4 model;
-out vec2 vUV;
+layout(location = 0) out vec2 vUV;
 uniform int uSkinned;
+
+uniform int uCubePass;
 
 
 void main() {
@@ -23,6 +25,7 @@ void main() {
         localPos = skinMatrix * localPos;
     }
 
-    gl_Position = spaceMatrix * model * localPos;
+    vec4 worldPos = model * localPos;
+    gl_Position = uCubePass == 1 ? worldPos : spaceMatrix * worldPos;
     vUV = aUV;
 }

@@ -4,12 +4,18 @@ import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
+import org.luaj.vm2.LuaError;
+import org.luaj.vm2.lib.jse.JsePlatform;
+import org.sharkk2.game.Game;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Bounds;
+import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class Helpers {
     public static String readFile(String path) {
@@ -64,6 +70,33 @@ public class Helpers {
         float z = (float) (Math.cos(pitch) * -Math.sin(yaw));
 
         return new Vector3f(x, y, z).negate().normalize();
+    }
+
+    public static boolean validateLua(String script) {
+        try {
+            JsePlatform.standardGlobals().load(script, "check");
+            return true;
+        } catch (LuaError e) {
+            return false;
+        }
+    }
+
+    public static void translateObjects(List<GameObject> objects, float dx, float dy, float dz) {
+        for (GameObject obj : objects) {
+            obj.transform.transformPos(dx, dy, dz);
+        }
+    }
+
+    public static void rotateObjects(List<GameObject> objects, float dp, float dy, float dr) {
+        for (GameObject obj : objects) {
+            obj.transform.transformRotation(dp, dy ,dr);
+        }
+    }
+
+    public static void scaleObjects(List<GameObject> objects, float dw, float dh, float dd) {
+        for (GameObject obj : objects) {
+            obj.transform.transformScale(dw, dh, dd);
+        }
     }
 
 }

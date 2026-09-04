@@ -1,6 +1,5 @@
 package org.sharkk2.sengine.core.systems.components;
 
-import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.core.classes.Bounds;
@@ -8,6 +7,8 @@ import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Objects;
 
 import static org.lwjgl.opengl.GL43.*;
 
@@ -23,16 +24,27 @@ public class ModelComponent extends Component {
     public float[] uvs;
     public int[] indices;
     public Material material = new Material();
-    public Renderer.DrawMode drawMode = Renderer.DrawMode.TRIANGLES;
-    public boolean castShadow = true;
-    public boolean visible = true;
+    private Renderer.DrawMode drawMode = Renderer.DrawMode.TRIANGLES;
+    private boolean castShadow = true;
+    private boolean visible = true;
     public final Bounds bounds = new Bounds();
     public static final int MAX_BONE_INFLUENCE = 4;
     public int vboBoneIds, vboBoneWeights;
     public int[] boneIds;
     public float[] boneWeights;
+    private Renderer.RenderMethod renderMethod = Renderer.RenderMethod.RENDER_DEFERRED;
     public boolean animated = false;
+    public int hash;
+    private boolean hashDirty = true;
 
+    public void setCastShadow(boolean v) {this.castShadow = v; markHashDirty();}
+    public boolean castsShadow() {return castShadow;}
+    public void setVisible(boolean v) {this.visible = v; markHashDirty();}
+    public boolean isVisible() {return visible;}
+    public void setDrawMode(Renderer.DrawMode drawMode) {this.drawMode = drawMode; markHashDirty();}
+    public Renderer.DrawMode getDrawMode() {return drawMode;}
+    public void setRenderMethod(Renderer.RenderMethod method) {this.renderMethod = method; markHashDirty();}
+    public Renderer.RenderMethod getRenderMethod() {return renderMethod;}
 
     public static class Material {
         public Vector3f albedo = new Vector3f(1, 1, 1);
@@ -134,6 +146,31 @@ public class ModelComponent extends Component {
                     "  alphaCutout = " + alphaCutout + "\n" +
                     "}";
         }
+
+
+        @Override
+        public int hashCode() {
+            int result = 1;
+            result = 31 * result + (albedo != null ? albedo.hashCode() : 0);
+            result = 31 * result + Float.floatToIntBits(roughness);
+            result = 31 * result + Float.floatToIntBits(metalness);
+            result = 31 * result + (emissive != null ? emissive.hashCode() : 0);
+            result = 31 * result + Float.floatToIntBits(emissiveStrength);
+            result = 31 * result + Float.floatToIntBits(opacity);
+            result = 31 * result + albedoTex;
+            result = 31 * result + normalTex;
+            result = 31 * result + roughnessTex;
+            result = 31 * result + metalnessTex;
+            result = 31 * result + aoTex;
+            result = 31 * result + emissiveTex;
+            result = 31 * result + heightTex;
+            result = 31 * result + opacityTex;
+            result = 31 * result + (enabled ? 1 : 0);
+            result = 31 * result + alphaMaskTex;
+            result = 31 * result + Float.floatToIntBits(alphaMaskThreshold);
+            result = 31 * result + (alphaCutout ? 1 : 0);
+            return result;
+        }
     }
 
 
@@ -226,4 +263,30 @@ public class ModelComponent extends Component {
         copy.drawMode = drawMode;
         return copy;
     }
+
+    public void markHashDirty() {hashDirty = true;}
+
+    @Override
+    public int hashCode() {
+        if (hashDirty) {
+            int result = 1;
+            result = 31 * result + Arrays.hashCode(vertices);
+            result = 31 * result + Arrays.hashCode(normals);
+            result = 31 * result + Arrays.hashCode(uvs);
+            result = 31 * result + Arrays.hashCode(indices);
+            result = 31 * result + (drawMode != null ? drawMode.hashCode() : 0);
+            result = 31 * result + (castShadow ? 1 : 0);
+            result = 31 * result + (visible ? 1 : 0);
+            result = 31 * result + (renderMethod != null ? renderMethod.hashCode() : 0);
+            hash = result;
+            hashDirty = false;
+        }
+        return hash;
+    }
+
+
+    public boolean canInstance(ModelComponent other) {
+        return other.hashCode() == hashCode() && other.material.hashCode() == material.hashCode();
+    }
+
 }

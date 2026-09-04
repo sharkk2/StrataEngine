@@ -69,7 +69,7 @@ public class RaycastService {
         for (GameObject go : scanPool) {
             if (!go.hasComponent(ModelComponent.class)) continue;
             ModelComponent model = go.getComponent(ModelComponent.class);
-            if (!model.visible && onlyVisible) continue;
+            if (!model.isVisible() && onlyVisible) continue;
             float t = rayIntersects(position, direction, model.bounds);
             if (t >= 0.01f && t < closestT) {
                 closestT = t;
@@ -104,7 +104,7 @@ public class RaycastService {
         for (GameObject go : scanPool) {
             if (!go.hasComponent(ModelComponent.class)) continue;
             ModelComponent model = go.getComponent(ModelComponent.class);
-            if (!model.visible && onlyVisible) continue;
+            if (!model.isVisible() && onlyVisible) continue;
             float t = rayIntersects(position, rDir, model.bounds);
             if (t >= 0.01f && t < closestT) {
                 closestT = t;

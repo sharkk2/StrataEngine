@@ -30,8 +30,10 @@ public class PlayerController extends Component {
     private float bobTimer = 0f;
     private float bobOffsetY = 0f;
 
-    private final List<ModelComponent> playerModels = new ArrayList<>();
-    private final List<ModelComponent> sceneModels = new ArrayList<>();
+
+
+    private final List<GameObject> droppedCameras = new ArrayList<>();
+    private int cameraIndex = -1; // -1 = the player's own camera, 0..n-1 = index into droppedCameras
 
     @Override
     protected void onObjectAttach() {
@@ -49,6 +51,31 @@ public class PlayerController extends Component {
         Engine engine = owner.getEngine();
         InputService input = engine.getInputService();
         float dt = engine.getDeltaTime();
+
+        CameraComponent camera = owner.getComponent(CameraComponent.class);
+        if (camera == null) return;
+
+        if (input.isKeyPressed(GLFW_KEY_F7)) {
+            dropCamera(engine, camera);
+        }
+
+        if (input.isKeyPressed(GLFW_KEY_F8)) {
+            cycleCamera(engine, camera);
+        }
+
+        if (input.isKeyPressed(GLFW_KEY_F6) && cameraIndex != -1 && !droppedCameras.isEmpty()) {
+            engine.getSceneManager().getActiveScene().removeObject(droppedCameras.get(cameraIndex));
+            droppedCameras.remove(cameraIndex);
+            cameraIndex--;
+            if (cameraIndex == -1) {engine.getCameraService().setPrimaryCamera(camera);}
+            else {
+                engine.getCameraService().setPrimaryCamera(droppedCameras.get(cameraIndex).getComponent(CameraComponent.class));
+            }
+
+
+        }
+
+        if (cameraIndex != -1) {return;}
         double scroll = input.getScrollDY();
         if (scroll != 0) {
             speedMultiplier *= (float) Math.pow(1.1f, scroll);
@@ -58,9 +85,6 @@ public class PlayerController extends Component {
         float maxSpeed = engine.getValue("controls.max_speed") * dt * speedMultiplier;
         float accel = engine.getValue("controls.acceleration") * dt;
         float friction = (float) Math.pow(engine.getValue("controls.friction"), dt * 60);
-
-        CameraComponent camera = owner.getComponent(CameraComponent.class);
-        if (camera == null) return;
 
         // snapshot last frame's grounded state; move() will recompute the real one below
         boolean wasGrounded = grounded;
@@ -102,10 +126,10 @@ public class PlayerController extends Component {
         float rightZ = (float) Math.cos(radYaw);
 
         float moveX = 0, moveZ = 0;
-        if (input.isKeyDown(GLFW_KEY_W)) { moveX += forwardX; moveZ += forwardZ; }
-        if (input.isKeyDown(GLFW_KEY_S)) { moveX -= forwardX; moveZ -= forwardZ; }
-        if (input.isKeyDown(GLFW_KEY_A)) { moveX -= rightX; moveZ -= rightZ; }
-        if (input.isKeyDown(GLFW_KEY_D)) { moveX += rightX; moveZ += rightZ; }
+        if (input.isKeyDown(GLFW_KEY_W) && !input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) { moveX += forwardX; moveZ += forwardZ; }
+        if (input.isKeyDown(GLFW_KEY_S) && !input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) { moveX -= forwardX; moveZ -= forwardZ; }
+        if (input.isKeyDown(GLFW_KEY_A) && !input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) { moveX -= rightX; moveZ -= rightZ; }
+        if (input.isKeyDown(GLFW_KEY_D) && !input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) { moveX += rightX; moveZ += rightZ; }
         float moveMag = (float) Math.sqrt(moveX * moveX + moveZ * moveZ);
         if (moveMag > 0) {
             moveX /= moveMag;
@@ -163,7 +187,39 @@ public class PlayerController extends Component {
         }
 
         if (input.isKeyPressed(GLFW_KEY_ESCAPE)) {
+            System.exit(0);
         }
+    }
+
+    private void dropCamera(Engine engine, CameraComponent mainCamera) {
+        Vector3f pos = owner.transform.getPosition();
+
+        GameObject camObject = new GameObject(engine);
+        camObject.setName("dropped_camera_" + (droppedCameras.size() + 1));
+        camObject.transform.setPosition(pos.x, pos.y, pos.z);
+
+        CameraComponent newCamera = new CameraComponent();
+        newCamera.name = "dropped_camera_" + (droppedCameras.size() + 1);
+        camObject.attachComponent(newCamera);
+        newCamera.setDirection(mainCamera.getPitch(), mainCamera.getYaw());
+        engine.getSceneManager().getActiveScene().addObject(camObject);
+        droppedCameras.add(camObject);
+
+        Logger.info("Dropped camera #" + droppedCameras.size() + " at " + pos);
+    }
+
+    private void cycleCamera(Engine engine, CameraComponent mainCamera) {
+        if (droppedCameras.isEmpty()) return;
+
+        cameraIndex++;
+        if (cameraIndex >= droppedCameras.size()) {
+            cameraIndex = -1;
+            engine.getCameraService().setPrimaryCamera(mainCamera);
+            return;
+        }
+
+        CameraComponent nextCamera = droppedCameras.get(cameraIndex).getComponent(CameraComponent.class);
+        engine.getCameraService().setPrimaryCamera(nextCamera);
     }
 
     private static final float AXIS_EPS = 1e-4f;

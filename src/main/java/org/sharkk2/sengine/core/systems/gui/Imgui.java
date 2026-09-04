@@ -13,7 +13,9 @@ import imgui.type.ImBoolean;
 import imgui.type.ImFloat;
 import imgui.extension.imguizmo.flag.Mode;
 import imgui.extension.imguizmo.flag.Operation;
+import imgui.type.ImInt;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
@@ -46,7 +48,9 @@ public class Imgui {
     private final Deque<HistoryEntry> redoStack = new ArrayDeque<>();
     private boolean gizmoActive = false;
     private HistoryEntry pendingGizmoEntry;
-
+    private boolean dayTimePlaying = false;
+    private final ImFloat dayTimeSpeedRef = new ImFloat(50f);
+    private float dayTimeAccumulator = 0f;
     public Imgui(Engine engine) {
         this.engine = engine;
     }
@@ -71,11 +75,11 @@ public class Imgui {
 
         imGuiGlfw.init(engine.getWindowHandle(), true);
         imGuiGl3.init("#version 150 core");
-        engine.getInputService().setMapping("wireframe", GLFW_KEY_F1);
-        engine.getInputService().setMapping("changeRenderingMode", GLFW_KEY_F2);
-        engine.getInputService().setMapping("toggleSSAO", GLFW_KEY_F3);
-        engine.getInputService().setMapping("toggleMouse", GLFW_KEY_F4);
-        engine.getInputService().setMapping("toggleGUI", GLFW_KEY_F9);
+        engine.getInputService().setMapping("wireframe", InputService.InputType.KEYBOARD, GLFW_KEY_F1);
+        engine.getInputService().setMapping("changeRenderingMode", InputService.InputType.KEYBOARD, GLFW_KEY_F2);
+        engine.getInputService().setMapping("toggleSSAO", InputService.InputType.KEYBOARD, GLFW_KEY_F3);
+        engine.getInputService().setMapping("toggleMouse", InputService.InputType.KEYBOARD, GLFW_KEY_F4);
+        engine.getInputService().setMapping("toggleGUI", InputService.InputType.KEYBOARD, GLFW_KEY_F9);
 
         defaultValueConfig.putAll(new TreeMap<>(engine.valueConfig));
         initialized = true;
@@ -90,6 +94,7 @@ public class Imgui {
 
 
     public void renderImGui() {
+        if (engine.getSceneManager().getActiveScene() == null || !engine.getSceneManager().getActiveScene().isLoaded()) return;
         tickGUI();
         if (!engine.getIO("imgui.enabled")) return;
 
@@ -115,7 +120,6 @@ public class Imgui {
         }
 
         if (selectedObject != null) {
-            renderObjectMenu(selectedObject);
             engine.getDebugger().visualizeDirection(selectedObject, 3);
 
             if (selectedObject.hasComponent(ModelComponent.class)) {
@@ -177,7 +181,7 @@ public class Imgui {
                     1000,
                     true
             );
-            if (clicked != null && input.isKeyDown(GLFW_KEY_LEFT_CONTROL)) {
+            if (clicked != null && input.isKeyDown(GLFW_KEY_LEFT_ALT)) {
                 selectedObject = clicked;
             } else if (clicked != null) {
                 selectedObject = clicked.getRoot();
@@ -219,8 +223,8 @@ public class Imgui {
 
 
         Renderer renderer = engine.getRenderer();
-        if (input.isKeyPressed(input.getButton("wireframe"))) {renderer.enableWireframe(!renderer.wireframeEnabled());}
-        if (input.isKeyPressed(input.getButton("changeRenderingMode"))) {
+        if (input.isKeyPressed(input.getMapping("wireframe").code())) {renderer.enableWireframe(!renderer.wireframeEnabled());}
+        if (input.isKeyPressed(input.getMapping("changeRenderingMode").code())) {
             int next = renderer.getRenderingMode().ordinal() + 1;
             if (next >= Renderer.RenderMode.MODE_MAX.ordinal()) next = 0;
             renderer.setRenderingMode(Renderer.RenderMode.values()[next]);
@@ -234,17 +238,17 @@ public class Imgui {
             manipulationMode = Operation.ROTATE;
         }
 
-        if (input.isKeyPressed(input.getButton("toggleSSAO"))) {
+        if (input.isKeyPressed(input.getMapping("toggleSSAO").code())) {
             engine.setIO("ssao", !engine.getIO("ssao"));
         }
 
-        if (input.isKeyPressed(input.getButton("toggleMouse"))) {
+        if (input.isKeyPressed(input.getMapping("toggleMouse").code())) {
             engine.setIO("mouse_visible", !engine.getIO("mouse_visible"));
             glfwSetInputMode(engine.getWindowHandle(), GLFW_CURSOR, engine.getIO("mouse_visible")? GLFW_CURSOR_NORMAL:GLFW_CURSOR_DISABLED);
         }
 
 
-        if (input.isKeyPressed(input.getButton("toggleGUI"))) {
+        if (input.isKeyPressed(input.getMapping("toggleGUI").code())) {
             engine.setIO("imgui.enabled", !engine.getIO("imgui.enabled"));
         }
 
@@ -273,6 +277,7 @@ public class Imgui {
             ImBoolean ref = ioRefs.computeIfAbsent(key, k -> new ImBoolean(entry.getValue()));
             ref.set(engine.getIO(key));
             if (ImGui.checkbox(key, ref)) {
+                if (key.equals("bloom") && !ref.get()) engine.setIO("lens_dirt", false);
                 engine.setIO(key, ref.get());
             }
         }
@@ -287,19 +292,53 @@ public class Imgui {
 
             ImGui.setNextItemWidth(120);
             if (ImGui.inputFloat(key, ref)) {
-                engine.setValue(key, ref.get());
+                if (key.equals("res_width")) {
+                    engine.setResolution((int) ref.get(), (int) engine.getValue("res_height"));
+                } else if (key.equals("res_height")) {
+                    engine.setResolution((int) engine.getValue("res_width"), (int) ref.get());
+                } else {
+                    engine.setValue(key, ref.get());
+                }
             }
             ImGui.sameLine();
             float def = defaultValueConfig.getOrDefault(key, entry.getValue());
             ImGui.textDisabled(String.format("(ref %.3f)", def));
         }
         ImGui.separator();
-        float[] time = {(float) engine.getSceneManager().getActiveScene().getSceneDayTime()};
-        if (ImGui.sliderFloat("Time", time, 0, 1)) {
-            engine.getSceneManager().getActiveScene().setTime(time[0]);
+
+        Scene.Sky sky = engine.getSceneManager().getActiveScene().environment.sky;
+        Scene.Lights lights = engine.getSceneManager().getActiveScene().lights;
+
+
+        if (dayTimePlaying) {
+            dayTimeAccumulator += dayTimeSpeedRef.get() * engine.getDeltaTime();
+            int wholeSeconds = (int) Math.floor(dayTimeAccumulator);
+            if (wholeSeconds != 0) {
+                sky.dayTime = Math.floorMod(sky.dayTime + wholeSeconds, sky.dayLengthSeconds);
+                sky.calculateDirections();
+                syncLightWithSky(sky, lights);
+                dayTimeAccumulator -= wholeSeconds;
+            }
         }
 
-        Scene.Lights lights = engine.getSceneManager().getActiveScene().lights;
+        int[] time = {sky.dayTime};
+        if (ImGui.sliderInt("Time", time, 0, sky.dayLengthSeconds)) {
+            sky.dayTime = time[0];
+            sky.calculateDirections();
+            syncLightWithSky(sky, lights);
+        }
+
+        ImGui.sameLine();
+        if (ImGui.button(dayTimePlaying ? "Pause" : "Play")) {
+            dayTimePlaying = !dayTimePlaying;
+            if (dayTimePlaying) {
+                dayTimeAccumulator = 0f;
+            }
+        }
+
+        ImGui.setNextItemWidth(120);
+        ImGui.inputFloat("Day Time Speed", dayTimeSpeedRef);
+
         float[] ambX = {lights.globalLight.ambient.x};
         float[] ambY = {lights.globalLight.ambient.y};
         float[] ambZ = {lights.globalLight.ambient.z};
@@ -312,19 +351,59 @@ public class Imgui {
             lights.globalLight.ambient.y = ambY[0];
         }
 
-        if (ImGui.sliderFloat("Ambient Blue", ambZ, 0,1)){
+        if (ImGui.sliderFloat("Ambient Blue", ambZ, 0, 1)) {
             lights.globalLight.ambient.z = ambZ[0];
         }
-    }
 
-    private void renderObjectMenu(GameObject object) {
-        if (object == null) return;
-        if (ImGui.begin(object.getName())) {
-            ImGui.text(object.getName());
+        ImInt aaMode = new ImInt(engine.getRenderer().AAMode.ordinal());
+
+        if (ImGui.radioButton("None", aaMode, 0)) {
+            engine.getRenderer().AAMode = Renderer.AntiAliasingMode.NONE;
         }
-        ImGui.end();
+
+        ImGui.sameLine();
+
+        if (ImGui.radioButton("FXAA", aaMode, 1)) {
+            engine.getRenderer().AAMode = Renderer.AntiAliasingMode.FXAA;
+        }
+
+        ImGui.sameLine();
+
+        if (ImGui.radioButton("SMAA", aaMode, 2)) {
+            engine.getRenderer().AAMode = Renderer.AntiAliasingMode.SMAA;
+        }
     }
 
+    private void syncLightWithSky(Scene.Sky sky, Scene.Lights lights) {
+        float sunElevation = -sky.sunDirection.y;
+        float moonElevation = -sky.moonDirection.y;
+
+        // 1 = fully sunlit, 0 = fully moonlit; smooth crossfade near the horizon instead of a hard switch
+        float blend = smoothstep(-0.1f, 0.1f, sunElevation);
+
+        Vector3f sunColor = new Vector3f(1.0f, 0.96f, 0.88f);
+        Vector3f moonColor = new Vector3f(0.4f, 0.45f, 0.65f);
+
+        Vector3f dir = new Vector3f();
+        sky.sunDirection.lerp(sky.moonDirection, 1f - blend, dir);
+        lights.globalLight.direction.set(dir).normalize();
+
+        Vector3f color = new Vector3f();
+        sunColor.lerp(moonColor, 1f - blend, color);
+        lights.globalLight.color.set(color);
+
+        float sunFactor = Math.max(0f, sunElevation);
+        float moonFactor = Math.max(0f, moonElevation) * 0.15f; // moon much dimmer than the sun
+        float dayFactor = Math.min(1f, Math.max(0.05f, sunFactor + moonFactor));
+
+        lights.globalLight.ambient.set(0.3f, 0.3f, 0.35f).mul(dayFactor);
+        lights.globalLight.intensity = 0.2f + dayFactor * 1.3f;
+    }
+
+    private float smoothstep(float edge0, float edge1, float x) {
+        float t = Math.max(0f, Math.min(1f, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3f - 2f * t);
+    }
 
     private void renderDebugOverlay() {
         int flags = ImGuiWindowFlags.NoDecoration

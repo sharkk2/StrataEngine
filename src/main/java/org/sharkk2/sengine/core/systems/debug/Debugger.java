@@ -8,18 +8,26 @@ import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.AssetLoader;
+import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 import org.sharkk2.sengine.core.systems.components.ScriptComponent;
+import org.sharkk2.sengine.core.systems.renderer.RenderPrimitives;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_L;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_P;
+import static org.lwjgl.opengl.GL43.*;
+
 public class Debugger {
     private final Engine engine;
     private final Map<Bounds, GameObject> boundsObjects = new HashMap<>();
     private final Map<GameObject, GameObject> directionObjects = new HashMap<>();
+    private final RenderPrimitives.RenderPrimitive overlayQuad = RenderPrimitives.quad();
+    private int overlaySampler = -1;
 
     public Debugger(Engine engine) {
         this.engine = engine;
@@ -27,9 +35,10 @@ public class Debugger {
 
 
     public void visualizeLight(GameObject lightObject, boolean faceCamera) {
+        // todo: add direction change for spot lights!!!
         if (!engine.initialized) {throw new EngineInitException("Engine is not initialized!");}
         if (!lightObject.hasComponent(LightComponent.class)) {
-            Logger.warning("Object has no light to visualize");
+            Logger.error("Object has no light to visualize");
             return;
         }
 
@@ -38,7 +47,6 @@ public class Debugger {
         billboard.material.albedoTex = spriteTex;
         billboard.name = "debug_billboard";
         billboard.material.enabled = false;
-        lightObject.transform.scale(0.3f, 0.3f, 0.3f);
 
         lightObject.attachComponent(billboard);
         if (faceCamera) {
@@ -113,5 +121,28 @@ public class Debugger {
                 logHierarchy(child);
             }
         }
+    }
+
+    public void render2DTextureOverlay(int texture) {
+        ShaderService.Shader overlayShader = engine.getShaderService().get("shaders/dpass/lightingVert.glsl", "shaders/debug/debugOverlay.glsl");
+        if (overlaySampler == -1) {
+            overlaySampler = glGenSamplers();
+            glSamplerParameteri(overlaySampler, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+            glSamplerParameteri(overlaySampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glSamplerParameteri(overlaySampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glSamplerParameteri(overlaySampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glSamplerParameteri(overlaySampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        boolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glBindSampler(0, overlaySampler);
+        overlayShader.use();
+        overlayShader.setInt("uOverlayTex", 0);
+        overlayQuad.bind();
+        overlayQuad.draw();
+        glBindSampler(0, 0);
+        if (depthWasEnabled) glEnable(GL_DEPTH_TEST);
     }
 }

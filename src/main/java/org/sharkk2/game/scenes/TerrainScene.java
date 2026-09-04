@@ -5,12 +5,10 @@ import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.Logger;
-import org.sharkk2.sengine.core.classes.AudioListener;
-import org.sharkk2.sengine.core.classes.Color;
-import org.sharkk2.sengine.core.classes.GameObject;
-import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.*;
 import org.sharkk2.sengine.core.systems.AssetLoader;
 import org.sharkk2.sengine.core.systems.AudioService;
+import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.components.*;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -27,10 +25,8 @@ public class TerrainScene extends Scene {
     GameObject human;
     @Override
     protected void onLoad() {
-        GameObject skybox = new GameObject(engine);
-        skybox.attachComponent(new SkyboxComponent(engine));
-        addObject(skybox);
-        environment.setActiveSkybox(skybox);
+        environment.sky.moonTexture = engine.getAssetLoader().loadTexture("src/main/resources/textures/moon.png", TEXTURE_BLENDED);
+        environment.sky.weather = Sky.SkyWeather.CLOUDY;
 
         LightComponent flashlight = lights.createLight(LightComponent.LightType.SPOT_LIGHT);
         flashlight.spotLightInnerCutoff = 0.982f;
@@ -39,13 +35,14 @@ public class TerrainScene extends Scene {
         flashlight.range = 100;
         flashlight.castShadow = true;
         flashlight.lightCookieTex = engine.getAssetLoader().loadTexture("src/main/resources/textures/flashlightCookie3.jpg", TEXTURE_BLENDED);
-        flashlight.offset.set(-0.2f, -0.25f, 0.05f);
+        flashlight.offset.set(-0.4f, -0.5f, 0.09f);
         GameObject player = new GameObject(engine);
         player.setName("player");
-        player.attachComponent(engine.getAssetLoader().primitives.capsule(0.5f, 2f, 48, 48));
+       // player.attachComponent(engine.getAssetLoader().primitives.capsule(0.5f, 2f, 48, 48));
         player.transform.transformPos(0, 1, 0);
         player.cascade(ModelComponent.class, (mc) -> {
-            mc.visible = false;
+            flashlight.addShadowExclusion(mc);
+            mc.setVisible(false);
             mc.getOwner().attachComponent(new ColliderComponent(mc.bounds));
         });
 
@@ -55,80 +52,25 @@ public class TerrainScene extends Scene {
         cam.name = "niggacam";
         player.attachComponent(new PlayerController());
         player.attachComponent(flashlight);
-        float[] flickerTimers = {10.0f + new Random().nextFloat() * 5.0f, 0.0f};
-        int[] flickerPulsesRemaining = {0};
-        Random flickerRandom = new Random();
-        Vector3f defaultOffset = new Vector3f(flashlight.offset);
-        Vector3f currentOffset = new Vector3f(flashlight.offset);
-        player.attachComponent(new ScriptComponent((ctx) -> {
-            Boolean enabled = ctx.readState("enabled");
-            Float currentIntensity = ctx.readState("currentIntensity");
-            Float currentFov = ctx.readState("currentFov");
-            Float defaultFov = ctx.readState("defaultFov");
-            Map<Integer, Vector3f> dirs = ctx.readState("dirs");
-            if (enabled == null) {
-                dirs = new HashMap<>();
-                ctx.state("enabled", true);
-                ctx.state("currentIntensity", flashlight.intensity);
-                ctx.state("currentFov", cam.getFov());
-                ctx.state("defaultFov", cam.getFov());
-                ctx.state("dirs", dirs);
-                enabled = true;
-                currentIntensity = flashlight.intensity;
-                defaultFov = cam.getFov();
-                currentFov = cam.getFov();
-            }
 
-            float dt = engine.getDeltaTime();
-            if (engine.getInputService().isKeyPressed(GLFW_KEY_F)) {
-                ctx.state("enabled", !enabled);
-                enabled = !enabled;
-            }
+        engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
+        engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
 
-            boolean rightClickHeld = engine.getInputService().isMouseDown(GLFW_MOUSE_BUTTON_RIGHT);
-            currentOffset.lerp(rightClickHeld ? new Vector3f() : defaultOffset, Math.min(1.0f, dt * 10.0f));
-            flashlight.offset.set(currentOffset);
-
-            float targetFov = rightClickHeld ? defaultFov - 5.0f : defaultFov;
-            currentFov += (targetFov - currentFov) * Math.min(1.0f, dt * 10.0f);
-            cam.setFov(currentFov);
-            ctx.state("currentFov", currentFov);
-
-            dirs.put(engine.getTotalFrameCount(), cam.getDirection());
-            Vector3f pastDir = dirs.get(Math.max(engine.getTotalFrameCount() - 25, 0));
-            if (pastDir != null) {
-                flashlight.spotLightDirection.set(pastDir.x, pastDir.y - 0.1f, pastDir.z).normalize();
-                dirs.remove(engine.getTotalFrameCount() - 25);
-            }
-            ctx.state("dirs", dirs);
-
-            float targetIntensity = enabled ? 7.0f : 0.0f;
-            ctx.state("currentIntensity", currentIntensity += (targetIntensity - currentIntensity) * Math.min(1.0f, dt * 10.0f));
-            float outputIntensity = currentIntensity;
-
-            if (enabled) {
-                if (flickerPulsesRemaining[0] > 0) {
-                    flickerTimers[1] -= dt;
-                    if (flickerTimers[1] <= 0.0f) {
-                        flickerTimers[1] = 0.03f + flickerRandom.nextFloat() * 0.06f;
-                        flickerPulsesRemaining[0]--;
-                    }
-                    if (flickerPulsesRemaining[0] % 2 == 0) {
-                        outputIntensity = 0.0f;
-                    }
-                } else {
-                    flickerTimers[0] -= dt;
-                    if (flickerTimers[0] <= 0.0f) {
-                        flickerTimers[0] = 10.0f + flickerRandom.nextFloat() * 5.0f;
-                        flickerPulsesRemaining[0] = 1 + flickerRandom.nextInt(4);
-                    }
-                }
-            }
-
-            flashlight.intensity = outputIntensity;
-        }));
-
+        LuaScript flashlightScript = engine.getAssetLoader().loadLuaScript("src/main/java/org/sharkk2/game/scripts/flashlight.lua", "flashScript");
+        flashlightScript.passObject(flashlight, "flashlight");
+        flashlightScript.passObject(cam, "cam");
+        flashlightScript.enableHotReloads(true, engine);
+        flashlightScript.supressErrors = true;
+        player.attachComponent(new ScriptComponent(flashlightScript));
         addObject(player);
+
+        GameObject backpack = engine.getAssetLoader().getModel("backpack");
+        backpack.transform.setPosition(5,3,0);
+        backpack.attachComponent(new ScriptComponent((ctx) -> {
+            backpack.transform.yaw += 15 * engine.getDeltaTime();
+        }));
+        backpack.setName("backpack");
+        addObject(backpack);
 
         GameObject box = new GameObject(engine);
         box.transform.scale(1000, 1, 1000);
@@ -142,6 +84,49 @@ public class TerrainScene extends Scene {
         box.attachComponent(mc);
 
         addObject(box);
+
+        GameObject object = new GameObject(engine);
+        ModelComponent omc = engine.getAssetLoader().primitives.cube();
+        omc.material.albedo.set(0,2,1);
+        omc.material.emissiveStrength = 3;
+        omc.material.emissive.set(0,0,1);
+        object.attachComponent(omc);
+        AudioComponent audio = new AudioComponent(engine.getAssetLoader().loadAudioFile("src/main/resources/audio/sound-mono.wav"));
+        audio.looping = true;
+        audio.playing = true;
+        audio.type = AudioComponent.AudioType.DIRECTED_AUDIO;
+        audio.innerConeAngle = 70;
+        audio.outerConeAngle = 180;
+        audio.maxDistance = 10;
+        object.attachComponent(audio);
+        object.transform.transformPos(0, 1, 2);
+
+
+        LuaScript luaScript = engine.getAssetLoader().loadLuaScript("src/main/java/org/sharkk2/game/scripts/ewwlua.lua", "testScript");
+        ScriptComponent script = new ScriptComponent(luaScript);
+        object.attachComponent(script);
+
+
+        addObject(object);
+
+        GameObject listenerr = new GameObject(engine);
+        ModelComponent lmc = engine.getAssetLoader().primitives.sphere(32, 32);
+        lmc.material.albedo.set(0,1,0);
+        lmc.material.emissive.set(0,1,0);
+        lmc.material.emissiveStrength = 3;
+        listenerr.attachComponent(lmc);
+        addObject(listenerr);
+
+        AudioListener listener = new AudioListener(engine, listenerr);
+        engine.getAudioService().setListener(listener);
+
+        GameObject crab = engine.getAssetLoader().getModel("crab");
+        addObject(crab);
+        crab.transform.setPosition(41, 3, 45);
+        AnimationComponent animation = new AnimationComponent(engine.getAssetLoader().getAnimations("crab"));
+        crab.attachComponent(animation);
+        animation.animationSpeed = 3;
+        animation.play("Dance");
 
     }
 

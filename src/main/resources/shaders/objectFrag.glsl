@@ -1,4 +1,5 @@
 #version 430 core
+#extension GL_ARB_bindless_texture : enable
 
 in vec2 vUV;
 in vec3 vWorldPos;
@@ -53,11 +54,10 @@ uniform int useAoTex;
 uniform int useOpacityTex;
 uniform int useAlphaMaskTex;
 
-uniform sampler2D ssaoTex;
-uniform int ssaoEnabled;
 
 uniform int lightEnabled;
-#define MAX_COOKIE_LIGHTS 8
+#define MAX_COOKIE_LIGHTS 64
+#define MAX_SHADOW_MAPS 64
 
 struct Light {
     vec3 position;
@@ -73,7 +73,8 @@ struct Light {
     int type;
     int hasCookie;
     int cookieSlot;
-    int _pad0; // could be used for a castShadow??? maybe
+    int shadowSlot;
+    mat4 lightSpaceMatrix;
 };
 
 uniform int lightCount;
@@ -83,6 +84,22 @@ layout(std430, binding = 2) readonly buffer LightBuffer {
 };
 
 uniform sampler2D cookieTextures[MAX_COOKIE_LIGHTS];
+uniform sampler2DShadow shadowTextures[MAX_SHADOW_MAPS];
+uniform samplerCubeShadow shadowCubeTextures[MAX_SHADOW_MAPS];
+
+layout(std140, binding = 1) uniform Fog {
+    vec4 fogColor; // rgb used, fuck alpha
+    float fogDensity;
+    float fogStart;
+    float fogEnd;
+    int fogEnabled;
+    int fogMode;
+    int blendSkyColor;
+};
+
+
+uniform int renderingMode;
+const float PI = 3.14159265359;
 
 const vec2 poissonDisk[16] = vec2[](
 vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
@@ -101,13 +118,15 @@ float rand(vec4 seed) {
 }
 
 float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lightDir) {
+    if (posLightSpace.w <= 0.0) return 1.0;
+
     vec3 projCoords = posLightSpace.xyz / posLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
     if (projCoords.z > 1.0) return 1.0;
 
     float currentDot = max(dot(norm, lightDir), 0.0);
     float tanAcos = sqrt(1.0 - currentDot * currentDot) / currentDot;
-    float bias = clamp(0.0005 * tanAcos, 0.0005, 0.015);
+    float bias = 0.0005;
     float angle = rand(vec4(gl_FragCoord.xyy, 1.0)) * 6.28318;
     float s = sin(angle);
     float c = cos(angle);
@@ -122,19 +141,20 @@ float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lig
     return shadow / 16.0;
 }
 
-layout(std140, binding = 1) uniform Fog {
-    vec4 fogColor; // rgb used, fuck alpha
-    float fogDensity;
-    float fogStart;
-    float fogEnd;
-    int fogEnabled;
-    int fogMode;
-    int blendSkyColor;
-};
+float computeCubeShadow(samplerCubeShadow map, vec3 fragToLight, float farPlane, vec3 norm, vec3 lightDir) {
+    float localZ = max(abs(fragToLight.x), max(abs(fragToLight.y), abs(fragToLight.z)));
+    if (localZ > farPlane) return 1.0;
+
+    float near = 0.1;
+    float ndcDepth = (farPlane + near) / (farPlane - near) - (2.0 * farPlane * near) / ((farPlane - near) * localZ);
+    float refDepth = ndcDepth * 0.5 + 0.5;
+
+    float bias = 0.0008;
+    return texture(map, vec4(fragToLight, refDepth - bias));
+}
 
 
-uniform int renderingMode;
-const float PI = 3.14159265359;
+
 
 float distributionGGX(vec3 N, vec3 H, float rough) {
     float a = rough * rough;
@@ -259,21 +279,22 @@ void main() {
 
         float shadowFactor = 1.0;
         if (globalShadowEnabled == 1) {
-            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos, 1.0);
+            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * 0.02, 1.0);
             shadowFactor = computeShadow(globalShadowTex, posLightSpace, norm, L);
         }
 
         Lo += (diffuse + specular) * dlColor * NdotL * dlIntensity * shadowFactor;
     }
 
+    // Local Lights Calculation (Points/Spots)
     for (int i = 0; i < lightCount; i++) {
         Light light = lights[i];
+        float dist = length(light.position - vWorldPos);
+        if (dist > light.range) continue;
 
         vec3 L = normalize(light.position - vWorldPos);
         vec3 H = normalize(V + L);
         float NdotL = max(dot(norm, L), 0.0);
-
-        float dist = length(light.position - vWorldPos);
         float attenuation = 1.0 / (light.constant + light.linear * dist + light.quadratic * dist * dist);
         float rangeFalloff = clamp(1.0 - pow(dist / light.range, 4.0), 0.0, 1.0);
         rangeFalloff *= rangeFalloff;
@@ -308,7 +329,18 @@ void main() {
             cookieColor = texture(cookieTextures[light.cookieSlot], cookieUV).rgb;
         }
 
-        Lo += (diffuse + specular) * light.color * light.intensity * NdotL * attenuation * rangeFalloff * spotFactor * cookieColor;
+        float localShadowFactor = 1.0;
+        if (light.shadowSlot >= 0) {
+            if (light.type == 1) {
+                vec4 posLightSpace = light.lightSpaceMatrix * vec4(vWorldPos + norm * 0.02, 1.0);
+                localShadowFactor = computeShadow(shadowTextures[light.shadowSlot], posLightSpace, norm, L);
+            } else {
+                vec3 fragToLight = vWorldPos - light.position;
+                localShadowFactor = computeCubeShadow(shadowCubeTextures[light.shadowSlot], fragToLight, light.range, norm, L);
+            }
+        }
+
+        Lo += (diffuse + specular) * light.color * light.intensity * NdotL * attenuation * rangeFalloff * spotFactor * cookieColor * localShadowFactor;
     }
 
     vec3 F_ambient = fresnelSchlickRoughness(NdotV, F0, mat_roughness);

@@ -6,6 +6,7 @@ uniform sampler2D depthTexture;
 uniform sampler2D screenTexture;
 uniform sampler2D bloomTexture;
 uniform sampler3D lutTexture;
+uniform sampler2D lensDirtTexture;
 uniform float bloomStrength;
 
 uniform float exposure;
@@ -16,8 +17,10 @@ uniform int applyACES;
 uniform int gammaCorrect;
 uniform int useColorGrading;
 uniform int useBloom;
+uniform int useLensDirt;
 uniform float time;
 uniform int AAMode;
+uniform float lensDirtIntensity;
 
 uniform vec2 sunScreenPos;
 uniform vec3 sunColor;
@@ -27,7 +30,6 @@ uniform float godrayDensity;
 uniform float godrayWeight;
 uniform float godrayMaxBrightness;
 uniform int godraysEnabled;
-
 const int GODRAY_SAMPLES = 64;
 
 
@@ -35,29 +37,46 @@ const int GODRAY_SAMPLES = 64;
 float luminance(vec3 color) {return dot(color, vec3(0.299, 0.587, 0.114));}
 
 vec3 FXAA(sampler2D tex, vec2 uv) {
-    ivec2 size = textureSize(screenTexture, 0);
-    vec2 texel = 1.0 / vec2(size);
+    vec2 texel = 1.0 / vec2(textureSize(tex, 0));
 
-    vec3 c = texture(tex, uv).rgb;
-    float l = luminance(c);
+    vec3 rgbNW = texture(tex, uv + vec2(-1.0, -1.0) * texel).rgb;
+    vec3 rgbNE = texture(tex, uv + vec2(1.0, -1.0) * texel).rgb;
+    vec3 rgbSW = texture(tex, uv + vec2(-1.0, 1.0) * texel).rgb;
+    vec3 rgbSE = texture(tex, uv + vec2(1.0, 1.0) * texel).rgb;
+    vec3 rgbM  = texture(tex, uv).rgb;
 
-    float n = luminance(texture(screenTexture, TexCoord + vec2(0.0, texel.y)).rgb);
-    float s = luminance(texture(screenTexture, TexCoord - vec2(0.0, texel.y)).rgb);
-    float e = luminance(texture(screenTexture, TexCoord + vec2(texel.x, 0.0)).rgb);
-    float w = luminance(texture(screenTexture, TexCoord - vec2(texel.x, 0.0)).rgb);
+    float lumaNW = luminance(rgbNW);
+    float lumaNE = luminance(rgbNE);
+    float lumaSW = luminance(rgbSW);
+    float lumaSE = luminance(rgbSE);
+    float lumaM  = luminance(rgbM);
 
-    float horizontal = abs(n - s);
-    float vertical = abs(e - w);
-    if (max(horizontal, vertical) < 0.1) return c;
-    if (horizontal > vertical) {
-        vec3 a = texture(tex, uv + vec2(0, texel.y)).rgb;
-        vec3 b = texture(tex, uv - vec2(0, texel.y)).rgb;
-        return (a + b + c) / 3.0;
-    } else {
-        vec3 a = texture(tex, uv + vec2(texel.x, 0)).rgb;
-        vec3 b = texture(tex, uv - vec2(texel.x, 0)).rgb;
-        return (a + b + c) / 3.0;
-    }
+    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+
+    if (lumaMax - lumaMin < max(0.0312, lumaMax * 0.125)) return rgbM;
+
+    vec2 dir;
+    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+
+    const float reduceMin = 1.0 / 128.0;
+    const float reduceMul = 1.0 / 8.0;
+    const float spanMax = 8.0;
+
+    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.25 * reduceMul, reduceMin);
+    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+    dir = clamp(dir * rcpDirMin, -spanMax, spanMax) * texel;
+
+    vec3 rgbA = 0.5 * (
+    texture(tex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +
+    texture(tex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+    vec3 rgbB = rgbA * 0.5 + 0.25 * (
+    texture(tex, uv + dir * -0.5).rgb +
+    texture(tex, uv + dir *  0.5).rgb);
+
+    float lumaB = luminance(rgbB);
+    return (lumaB < lumaMin || lumaB > lumaMax) ? rgbA : rgbB;
 }
 
 vec3 ACESFilm(vec3 x) {
@@ -95,6 +114,13 @@ vec3 computeGodRays(vec2 uv) {
     return min(result, vec3(godrayMaxBrightness));
 }
 
+vec3 bloomMix(vec3 clr) {
+    vec3 blm = texture(bloomTexture, TexCoord).rgb;
+    vec3 drt = texture(lensDirtTexture, vec2(TexCoord.x, 1.0f - TexCoord.y)).rgb * lensDirtIntensity;
+    vec3 result = mix(clr, blm + blm*drt, vec3(bloomStrength));
+    return result;
+}
+
 void main() {
     vec3 color;
     switch (AAMode) {
@@ -108,13 +134,16 @@ void main() {
     }
 
     if (useBloom == 1) {
-        vec3 bloomColor = texture(bloomTexture, TexCoord).rgb;
-        color += bloomColor * bloomStrength;
+        if (useLensDirt == 1) color = bloomMix(color);
+        else {
+            vec3 bloomColor = texture(bloomTexture, TexCoord).rgb;
+            color += bloomColor * bloomStrength;
+        }
     }
 
     if (useHDR == 1) {
         color = color * exposure;
-        if (applyACES == 1) color = ACESFilm(color);
+        if (applyACES == 1) color = ACESFilm(color * 0.6);
         else { color = color / (1.0 + color); }
         color = mix(vec3(luminance(color)), color, saturation);
     } else {

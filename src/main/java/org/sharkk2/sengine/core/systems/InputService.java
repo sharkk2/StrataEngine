@@ -19,23 +19,35 @@ public class InputService {
     private double scrollDX = 0, scrollDY = 0;
     private volatile boolean firstMouseEvent = true;
     private boolean mouselock;
-    private Map<String, Integer> buttonMappings = new HashMap<>();
+    public enum InputType { KEYBOARD, MOUSE, JOYSTICK }
+    public record InputBinding(InputType type, int code) {}
+    private final Map<String, InputBinding> mappings = new HashMap<>();
 
-    public void setMapping(String id, int button) {
-        if (!(GLFW_KEY_0 <= button && button <= GLFW_KEY_LAST)) {
-            Logger.warning("Invalid button was set for mapping ID: " + id);
+    public void setMapping(String id, InputType type, int code) {
+        boolean valid = switch (type) {
+            case KEYBOARD -> GLFW_KEY_0 <= code && code <= GLFW_KEY_LAST;
+            case MOUSE -> 0 <= code && code <= GLFW_MOUSE_BUTTON_LAST;
+            case JOYSTICK -> 0 <= code && code <= GLFW_JOYSTICK_LAST;
+        };
+
+        if (!valid) {
+            Logger.warning("Invalid " + type + " code for mapping ID: " + id);
             return;
         }
 
-        buttonMappings.put(id, button);
+        mappings.put(id, new InputBinding(type, code));
     }
 
-    public int getButton(String id) {
-        return buttonMappings.get(id);
+    public InputBinding getMapping(String id) {
+        InputBinding b = mappings.get(id);
+        if (b == null) {
+            Logger.warning("No mapping found for ID: " + id);
+        }
+        return b;
     }
 
     public void nullMapping(String id) {
-        buttonMappings.remove(id);
+        mappings.remove(id);
     }
 
 

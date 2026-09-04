@@ -7,175 +7,277 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
-import org.sharkk2.sengine.core.systems.components.*;
+import org.sharkk2.sengine.core.classes.exceptions.FrameBufferException;
+import org.sharkk2.sengine.core.classes.exceptions.RendererException;
+import org.sharkk2.sengine.core.systems.AssetLoader;
+import org.sharkk2.sengine.core.systems.ShaderService;
+import org.sharkk2.sengine.core.systems.components.AnimationComponent;
+import org.sharkk2.sengine.core.systems.components.CameraComponent;
+import org.sharkk2.sengine.core.systems.components.LightComponent;
+import org.sharkk2.sengine.core.systems.components.ModelComponent;
+import org.sharkk2.sengine.core.systems.renderer.passes.*;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
-import static org.lwjgl.glfw.GLFW.glfwGetTime;
 import static org.lwjgl.opengl.GL43.*;
+// ! Important bugs to fix:
+// fixme: Fix the fillrate problem on close geometry, if the camera is very close to geometry the fill rate grows exponentially, especially with forwarded objects
+// fixme: there are multiple points in the frame where many objects are being allocated and choking the GC
+// fixme: Implement batching or instancing to reduce draw calls, and LoD for shaders "can help with bug 1" and very early depth pass to reduce the impact on forwarded objects
 
 public class Renderer {
-    // fixme: this is probably the second most unoptimized shit i wrote
-    // fixme: its not obvious because i have less than 300 objects in my scene but under real load this is fucked
-    // for example that fucking uploadLight methods is scary asf
-    private final Engine engine;
-    private final PostProcessor postProcessor;
-    private final Bloomer bloomer;
-    private final ShaderService.Shader objectShader;
-    private final ShaderService.Shader skyboxShader;
-    private final ShaderService.Shader depthShader;
-    private final ShaderService.Shader gBufferShader;
-    private final ShaderService.Shader lightingShader;
-    private final ShaderService.Shader ssaoShader;
-    private final ShaderService.Shader ssaoBlurShader;
-    private final ShaderService.UBO cameraUBO;
-    private final ShaderService.UBO fogUBO;
-    private final ShaderService.SSBO lightSSBO;
-    private final ShaderService.SSBO boneMatrixSSBO;
-    private final GBuffer gbuffer;
-    private final SSAOBuffer ssaoBuffer;
+    public enum RenderMode {MODE_ALL, MODE_BASECOLOR, MODE_METALNESS, MODE_ROUGHNESS, MODE_NORMALS, MODE_EMISSIVE, MODE_AO, MODE_OPACITY, MODE_DEFERRED_ONLY, MODE_MAX}
+    public enum RenderMethod {RENDER_DEFERRED, RENDER_FORWARD, RENDER_SKIP}
+    public enum AntiAliasingMode {NONE, FXAA, SMAA}
+    public enum DrawMode {TRIANGLES, LINES}
 
-    private CameraComponent camera;
-    private Scene activeScene;
-    private boolean wireframe = false;
-    private int counter = 0;
-    private int lastRenderCount = 0;
+    public enum TextureSlot {
+        ALBEDO("useAlbedoTex", "albedoTex"),
+        ROUGHNESS("useRoughnessTex", "roughnessTex"),
+        METALNESS("useMetalnessTex", "metalnessTex"),
+        NORMAL("useNormalTex", "normalTex"),
+        EMISSIVE("useEmissiveTex", "emissiveTex"),
+        AO("useAoTex", "aoTex"),
+        ALPHA_MASK("useAlphaMaskTex", "alphaMaskTex"),
+        OPACITY("useOpacityTex", "opacityTex");
 
-    final int quadVAO;
-    final int quadVBO;
+        public final String useUniform;
+        public final String texUniform;
 
-    // Lights are no longer uniform-array bound (that's what capped us at 6/16) - they're streamed into
-    // an SSBO instead, so the light count is only limited by GPU memory / GL_MAX_SHADER_STORAGE_BLOCK_SIZE.
-    // Cookie *textures* are still a real hardware limit (each one needs a bound texture unit), so that's
-    // the only thing we still cap - see MAX_COOKIE_LIGHTS.
-    private static final int MAX_COOKIE_LIGHTS = 8;
-    private static final int COOKIE_TEX_UNIT_BASE = 5; // units 0-4 = gbuffer, 29-31 = ssao/shadow/skybox, so 5..12 is free
-    private static final int LIGHT_STRUCT_BYTES = 80; // must match the Light struct size (std430) in the lighting/object shaders
-    private static final int LIGHT_SSBO_BINDING = 2; // camera UBO=0, fog UBO=1
-    private static final int INITIAL_LIGHT_CAPACITY = 128;
+        TextureSlot(String useUniform, String texUniform) {
+            this.useUniform = useUniform;
+            this.texUniform = texUniform;
+        }
+    }
+
+
     private static final int BONE_SSBO_BINDING = 3;
     private static final int INITIAL_BONE_CAPACITY = 128; // joints
+    private static final int LIGHT_STRUCT_BYTES = 144;
+    private static final int LIGHT_SSBO_BINDING = 2; // camera UBO=0, fog UBO=1
+    private static final int INITIAL_LIGHT_CAPACITY = 128;
+    private static final int MAX_COOKIE_LIGHTS = 64;
+    private static final int MAX_SHADOW_MAPS = 64;
+
+    private static final int COOKIE_TEX_UNIT_BASE = 9;
+    private static final int FALLBACK_COOKIE_CAP = 6;
+    private static final int SHADOW_TEX_UNIT_BASE = COOKIE_TEX_UNIT_BASE + FALLBACK_COOKIE_CAP;
+    private static final int FALLBACK_SHADOW_CAP = 6;
+    private static final int SHADOW_CUBE_TEX_UNIT_BASE = SHADOW_TEX_UNIT_BASE + FALLBACK_SHADOW_CAP;
     private static final String[] COOKIE_TEX_UNIFORMS = new String[MAX_COOKIE_LIGHTS];
+    private static final String[] SHADOW_TEX_UNIFORMS = new String[MAX_SHADOW_MAPS];
+    private static final String[] SHADOW_CUBE_TEX_UNIFORMS = new String[MAX_SHADOW_MAPS];
+
     static {
         for (int i = 0; i < MAX_COOKIE_LIGHTS; i++) {
             COOKIE_TEX_UNIFORMS[i] = "cookieTextures[" + i + "]";
         }
+
+        for (int i = 0; i < MAX_SHADOW_MAPS; i++) {
+            SHADOW_TEX_UNIFORMS[i] = "shadowTextures[" + i + "]";
+            SHADOW_CUBE_TEX_UNIFORMS[i] = "shadowCubeTextures[" + i + "]";
+        }
     }
 
 
 
-    private static final int TEX_ALBEDO = 0;
-    private static final int TEX_ROUGHNESS = 1;
-    private static final int TEX_METALNESS = 2;
-    private static final int TEX_NORMAL = 3;
-    private static final int TEX_EMISSIVE = 4;
-    private static final int TEX_AO = 5;
-    private static final int TEX_ALPHA_MASK = 6;
-    private static final int TEX_OPACITY = 7;
-    private static final String[] TEX_USE_UNIFORMS = {
-            "useAlbedoTex", "useRoughnessTex", "useMetalnessTex", "useNormalTex",
-            "useEmissiveTex", "useAoTex", "useAlphaMaskTex", "useOpacityTex"
-    };
-    private static final String[] TEX_UNIFORMS = {
-            "albedoTex", "roughnessTex", "metalnessTex", "normalTex",
-            "emissiveTex", "aoTex", "alphaMaskTex", "opacityTex"
-    };
-
-    // preserve order on all of these enums
-    public enum RenderMode {
-        MODE_ALL, MODE_BASECOLOR, MODE_METALNESS, MODE_ROUGHNESS, MODE_NORMALS, MODE_EMISSIVE, MODE_AO, MODE_OPACITY, MODE_DEFERRED_ONLY, MODE_MAX
-    }
-
-    public enum RenderMethod {
-        RENDER_DEFERRED, RENDER_FORWARD, RENDER_SKIP
-    }
-
-    public enum AntiAliasingMode {
-        NONE, FXAA, SMAA
-    }
-
-    public enum DrawMode {
-        TRIANGLES, LINES
-    }
-
+    public AntiAliasingMode AAMode = AntiAliasingMode.FXAA;
     private RenderMode renderingMode = RenderMode.MODE_ALL;
-    private final List<LightComponent> thelights = new ArrayList<>();
-    private final Vector3f skycolor = new Vector3f();
-    private final List<GameObject> forwardRenders = new ArrayList<>();
-    private final List<GameObject> transparentObjects = new ArrayList<>();
+    private final Engine engine;
+    private final ShaderService.UBO cameraUBO;
+    private final ShaderService.UBO fogUBO;
+    private final ShaderService.SSBO boneMatrixSSBO;
+    private final ShaderService.Shader objectShader;
+    private final ShaderService.SSBO lightSSBO;
+    private final int dummyDepthTex;
+    private final int dummyDepthCubeTex;
+
+    private boolean wireframe = false;
+    private int counter = 0;
+    private int lastRenderCount = 0;
+    private int framebuffer;
+    private int fbColorTexture;
+    private int fbDepthTexture;
+    private int fbStencilTexture;
+
+    private final FrameContext frameContext = new FrameContext();
+    private final List<GameObject> renderQueue = new ArrayList<>();
+    private final List<RenderPass> renderPasses = new ArrayList<>();
     private final List<GameObject> sceneObjects = new ArrayList<>();
     private final ArrayDeque<GameObject> toVisit = new ArrayDeque<>();
 
-    private final List<GameObject> renderQueue = new ArrayList<>();
-    public AntiAliasingMode AAMode = AntiAliasingMode.NONE;
 
     public Renderer(Engine engine) {
         this.engine = engine;
-        this.postProcessor = new PostProcessor(engine);
-        this.bloomer = new Bloomer(engine);
-        this.gbuffer = new GBuffer(engine.getWindowWidth(), engine.getWindowHeight());
-        this.ssaoBuffer = new SSAOBuffer(engine.getWindowWidth(), engine.getWindowHeight());
-        ssaoShader = engine.getShaderService().get("shaders/ssao/ssaoVert.glsl", "shaders/ssao/ssaoFrag.glsl");
-        ssaoBlurShader = engine.getShaderService().get("shaders/ssao/ssaoVert.glsl", "shaders/ssao/ssaoBlurFrag.glsl");
-        depthShader = engine.getShaderService().get("shaders/depthVert.glsl", "shaders/depthFrag.glsl");
-        objectShader = engine.getShaderService().get("shaders/objectVert.glsl", "shaders/ObjectFrag.glsl");
-        skyboxShader = engine.getShaderService().get("shaders/skyboxVert.glsl", "shaders/skyboxFrag.glsl");
-        gBufferShader = engine.getShaderService().get("shaders/dpass/gBufferVert.glsl", "shaders/dpass/gBufferFrag.glsl");
-        lightingShader = engine.getShaderService().get("shaders/dpass/lightingVert.glsl", "shaders/dpass/lightingFrag.glsl");
         cameraUBO = engine.getShaderService().createUBO("camera", 0, 192);
         fogUBO = engine.getShaderService().createUBO("fog", 1, 48);
-
-        lightSSBO = engine.getShaderService().createSSBO("lights", LIGHT_SSBO_BINDING, INITIAL_LIGHT_CAPACITY * LIGHT_STRUCT_BYTES);
+        objectShader = engine.getShaderService().get("shaders/objectVert.glsl", "shaders/ObjectFrag.glsl");
         boneMatrixSSBO = engine.getShaderService().createSSBO("boneMatrices", BONE_SSBO_BINDING, INITIAL_BONE_CAPACITY * 64);
-        float[] quadVertices = {
-                -1f, 1f, 0f, 1f,
-                -1f, -1f, 0f, 0f,
-                1f, -1f, 1f, 0f,
-                -1f, 1f, 0f, 1f,
-                1f, -1f, 1f, 0f,
-                1f, 1f, 1f, 1f
-        };
+        lightSSBO = engine.getShaderService().createSSBO("lights", LIGHT_SSBO_BINDING, INITIAL_LIGHT_CAPACITY * LIGHT_STRUCT_BYTES);
+        dummyDepthTex = engine.getAssetLoader().loadEmptyDepthTexture(1, 1);
+        dummyDepthCubeTex = engine.getAssetLoader().loadEmptyDepthCubeTexture(1,1);
+        createFrameBuffer();
 
-        quadVAO = glGenVertexArrays();
-        quadVBO = glGenBuffers();
-        glBindVertexArray(quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, quadVertices, GL_STATIC_DRAW);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, false, 4 * Float.BYTES, 0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, false, 4 * Float.BYTES, 2 * Float.BYTES);
-        glBindVertexArray(0);
-
-        ssaoShader.use();
-        Vector3f[] ssaoKernel = ssaoBuffer.generateSSAOKernel((int) engine.getValue("ssao_samples"));
-        for (int i = 0; i < ssaoKernel.length; i++) {
-            ssaoShader.setVec3("samples[" + i + "]", ssaoKernel[i]);
-        }
+        registerPass(new GBufferPass(engine), false);
+        registerPass(new ShadowPass(engine), false);
+        registerPass(new SSAOPass(engine), false);
+        registerPass(new LightingPass(engine), false);
+        registerPass(new SkyPass(engine), false);
+        registerPass(new ForwardPass(engine), false);
+        registerPass(new BloomPass(engine), false);
+        registerPass(new PostProcessingPass(engine));
 
 
     }
 
-    public void enableWireframe(boolean v) { wireframe = v; }
+
+    public void enableWireframe(boolean v) {
+        wireframe = v;
+        if (v) engine.setWindowTitle("SharkEngine [WIREFRAME]" + engine.version);
+        else engine.setWindowTitle("SharkEngine " + engine.version);
+    }
     public boolean wireframeEnabled() { return wireframe; }
-    public PostProcessor getPostProcessor() { return postProcessor; }
-    public GBuffer getGbuffer() {return gbuffer;}
     public void setRenderingMode(RenderMode mode) { renderingMode = mode; }
     public RenderMode getRenderingMode() { return renderingMode; }
     public int getRenderCount() {return lastRenderCount;}
+    public ShaderService.SSBO getBoneMatrixSSBO() {return boneMatrixSSBO;}
+    public ShaderService.SSBO getLightSSBO() {return lightSSBO;}
+
+    /**Topological sort*/
+    private void sort(List<RenderPass> passes) {
+        Map<String, RenderPass> byName = new HashMap<>();
+        for (RenderPass p : passes) {
+            if (byName.containsKey(p.name)) {throw new RendererException("Duplicate pass name: " + p.name);}
+            byName.put(p.name, p);
+        }
+
+        Map<String, Integer> inDegree = new HashMap<>(); // total dependencies each pass has
+        Map<String, List<String>> dependents = new HashMap<>();
+
+        for (RenderPass p : passes) {
+            inDegree.putIfAbsent(p.name, 0);
+            dependents.putIfAbsent(p.name, new ArrayList<>());
+        }
+
+        for (RenderPass p : passes) {
+            for (String depName : p.dependencies()) {
+                if (!byName.containsKey(depName)) {throw new RendererException("Pass '" + p.name + "' depends on unknown pass '" + depName + "'");}
+                dependents.get(depName).add(p.name);
+                inDegree.merge(p.name, 1, Integer::sum);
+            }
+        }
+
+        Deque<String> queue = new ArrayDeque<>();
+        for (Map.Entry<String, Integer> e : inDegree.entrySet()) {if (e.getValue() == 0) queue.add(e.getKey());}
+        List<RenderPass> sorted = new ArrayList<>();
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            sorted.add(byName.get(current));
+            for (String dependent : dependents.get(current)) {
+                inDegree.merge(dependent, -1, Integer::sum);
+                if (inDegree.get(dependent) == 0) {queue.add(dependent);}
+            }
+        }
+
+        if (sorted.size() != passes.size()) {
+            List<String> remaining = new ArrayList<>();
+            for (Map.Entry<String, Integer> e : inDegree.entrySet()) {if (e.getValue() > 0) remaining.add(e.getKey());}
+            throw new RendererException("Cycle detected among passes: " + remaining);
+        }
+
+        passes.clear();
+        passes.addAll(sorted);
+        String passNames = sorted.stream()
+                .map(p -> p.name)
+                .collect(Collectors.joining(", "));
+
+        Logger.info("Detected and sorted (" + passes.size() + ") render passes: " + passNames);    }
+
+    public void registerPass(RenderPass pass) {
+        registerPass(pass, true);
+    }
+    public void registerPass(RenderPass pass, boolean sort) {
+        renderPasses.add(pass);
+        if (sort) sort(renderPasses);
+    }
+
+    public void removePass(RenderPass pass) {
+        renderPasses.remove(pass);
+        sort(renderPasses);
+    }
+
+    private void createFrameBuffer() {
+        int width = (int) engine.getValue("res_width");
+        int height = (int) engine.getValue("res_height");
+        framebuffer = glGenFramebuffers();
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        fbColorTexture = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, fbColorTexture);
+
+        if (engine.getIO("hdr")) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+        } else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbColorTexture, 0);
+        fbDepthTexture = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, fbDepthTexture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, width, height);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, fbDepthTexture, 0);
+
+        fbStencilTexture = glGenTextures();
+        glTextureView(fbStencilTexture, GL_TEXTURE_2D, fbDepthTexture, GL_DEPTH24_STENCIL8, 0, 1, 0, 1);
+        glBindTexture(GL_TEXTURE_2D, fbStencilTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_STENCIL_INDEX);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            Logger.error("Failed to init main framebuffer");
+            throw new FrameBufferException("Main FBO not complete D:");
+
+        }
+    }
+
+    private void drawBareObject(GameObject object) {
+        objectShader.use();
+        CameraComponent camera = engine.getCameraService().getPrimaryCamera();
+        for (GameObject child : object.children) drawBareObject(child);
+        if (object.hasComponent(ModelComponent.class)) {
+            ModelComponent model = object.getComponent(ModelComponent.class);
+            if (!camera.inFrustum(object, engine.getWindowAspectRatio(), model.bounds.boundingRadius) && engine.getIO("frustum_culling") && !object.isDebuggingObject) return;
+            if (!model.isVisible()) return;
+            glBindVertexArray(model.vao);
+            objectShader.setMat4("uModel", model.getOwner().transform.calculateWorldMatrix());
+            glDrawElements(model.getDrawMode() == DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+            counter++;
+
+        }
+    }
 
     public void renderScene(Scene scene) {
-        lastRenderCount = counter;
-        counter = 0; // for counting how many objects we render
-        activeScene = scene;
-        camera = engine.getCameraService().getPrimaryCamera();
-        forwardRenders.clear();
-        transparentObjects.clear();
-        scene.getObjects(sceneObjects);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        lastRenderCount = frameContext.renderCounter;
+        CameraComponent camera = engine.getCameraService().getPrimaryCamera();
+        if (camera == null) {
+            Logger.warning("No active camera found");
+            return;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        frameContext.clear();
+        frameContext.defaultFrameBuffer = framebuffer;
+        frameContext.defaultColorTexture = fbColorTexture;
+        frameContext.defaultDepthTexture = fbDepthTexture;
+        frameContext.defaultStencilTexture = fbStencilTexture;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer buf = stack.mallocFloat(48);
@@ -201,269 +303,65 @@ public class Renderer {
             fogUBO.upload(buf);
         } // uploading fog ubo "floats and ints are both 4 bytes"
 
-        glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
+        frameContext.scene = scene;
+        frameContext.mainCamera = camera;
 
+        glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
         if (wireframe) {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            setupObjectShader(scene);
-
-            for (GameObject object : sceneObjects) drawObject(object);
-            engine.setWindowTitle("SharkEngine " + engine.version + " [WIREFRAME]");
+            for (GameObject object : scene.getObjects()) {drawBareObject(object);}
             return;
         } // if wireframe on, if we used deferred or post processing, the 2D fullscreen quads will cover the screen, plus its useless cuz its just lines
 
         // collecting objects
-        toVisit.clear();
-        sceneObjects.addAll(renderQueue);
+        scene.getObjects(sceneObjects);
         toVisit.addAll(sceneObjects);
-        /* fixme: okay so things here can render twice "fixed"
-         *   because if we add an object to the scene, and then manual render it by adding it to the queue "via .renderObject"
-         *   and then set the object to RENDER_SKIP, the check below doesn't pass, because its in the queue
-         *   which results in adding the object, then adding it again from the queue AND KEEPING them.
-         *   what's supposed to happen is that it only renders once from the object added by queue "since renderObject ignores render_skip"
-         *   and the original object should be filtered out
-         *   -- im thinking about just making renderQueue objects abide to the RENDER_SKIP like every other mf object here
-         *   -- u can't have a skipped object added to the scene then render it manually, thats stupid just dont skip it then
-         *  */
-
-        while (!toVisit.isEmpty()) {
-            GameObject obj = toVisit.pop();
-            toVisit.addAll(obj.children);
-            if (obj.renderMethod == RenderMethod.RENDER_SKIP) {
-                sceneObjects.remove(obj);
-                continue;
-            }
-
-            if (obj.renderMethod == RenderMethod.RENDER_FORWARD) continue;
-            if (obj.hasComponent(ModelComponent.class) && obj.getComponent(ModelComponent.class).material.isTransparent()) {
-                transparentObjects.add(obj);
-            }
-        }
+        toVisit.addAll(renderQueue);
         renderQueue.clear();
+        while (!toVisit.isEmpty()) {
+            GameObject object = toVisit.pop();
+            toVisit.addAll(object.children);
+            if (object.hasComponent(LightComponent.class)) {
+                LightComponent light = object.getComponent(LightComponent.class);
+                frameContext.lights.add(light);
+                if (light.castShadow) frameContext.shadowLights.add(light);
+            }
 
-
-        gbuffer.bindGPass(); // Bind the GBUFFER
-        glDisable(GL_BLEND);   // <-- add this
-        // "this was a bug" u do NOT want blending enabled as it blends or averages gbuffer data
-
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_STENCIL_TEST);
-        glStencilMask(0xFF); // allow writing
-        glClear(GL_STENCIL_BUFFER_BIT); // clear the stencil buffer data
-        glStencilFunc(GL_ALWAYS, 1, 0xFF); // make it always pass
-        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // if pass write one
-        gBufferShader.use();
-        for (GameObject object : sceneObjects) gBufferPass(object);
-
-        glStencilMask(0x00); // disable writing
-        // that makes every pixel stamped with 1, which we will use down later to determine where to draw the skybox and do lighting
-
-
-        postProcessor.bindFBO();
-        runShadowPass();
-
-        if (engine.getIO("ssao")) {runSSAOPass();}
-
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, gbuffer.getFBO());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, postProcessor.getFBO());
-        glBlitFramebuffer(0, 0, gbuffer.getWidth(), gbuffer.getHeight(), 0, 0, gbuffer.getWidth(), gbuffer.getHeight(), GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
-        glBindFramebuffer(GL_FRAMEBUFFER, postProcessor.getFBO());
-        //  copy the depth and stencil buffer data to the pp, so forward objects have a correct depth buffer to read/write
-
-        // using the stencil buffer again, we make it that every pixel thats not stamped with 1 the skybox fills it
-        // the forward rendered stuff is drawn later on top so we dont have to care about them
-        glEnable(GL_STENCIL_TEST);
-        glStencilFunc(GL_EQUAL, 0, 0xFF);
-        glStencilMask(0x00);
-        renderSkybox();
-
-        glStencilFunc(GL_EQUAL, 1, 0xFF); // now if we DID stamp em, draw the light quad and do the fancy lighting
-        glDisable(GL_DEPTH_TEST);
-        Scene.GlobalSceneLight gsl = scene.lights.globalLight;
-        lightingShader.use();
-        lightingShader.setInt("renderingMode", renderingMode.ordinal());
-        lightingShader.setVec3("cameraPos", camera.getOwner().transform.getPosition());
-        lightingShader.setVec3("dlDirection", gsl.direction);
-        lightingShader.setVec3("dlColor", gsl.color);
-        lightingShader.setFloat("dlIntensity", gsl.intensity);
-        lightingShader.setVec3("ambient", gsl.ambient);
-        lightingShader.setInt("dlEnabled", gsl.enabled ? 1 : 0);
-        lightingShader.setInt("globalShadowEnabled", gsl.castShadow ? 1 : 0);
-        lightingShader.setMat4("globalLightSpaceMatrix", gsl.calcLightSpace(engine));
-        lightingShader.setVec3("skyColor", skycolor);
-        glActiveTexture(GL_TEXTURE30);
-        glBindTexture(GL_TEXTURE_2D, gsl.shadowMap.depthTexture);
-        lightingShader.setInt("globalShadowTex", 30);
-        uploadLights(lightingShader, camera.getOwner().transform.getPosition());
-        gbuffer.bindTextures(0);
-        lightingShader.setInt("gPosition", 0);
-        lightingShader.setInt("gNormal", 1);
-        lightingShader.setInt("gAlbedo", 2);
-        lightingShader.setInt("gMaterial", 3);
-        lightingShader.setInt("gEmissive", 4);
-        lightingShader.setInt("ssaoEnabled", engine.getIO("ssao") ? 1 : 0);
-        glActiveTexture(GL_TEXTURE29);
-        glBindTexture(GL_TEXTURE_2D, ssaoBuffer.getBlurTexture());
-        lightingShader.setInt("ssaoTex", 29);
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-
-        glEnable(GL_DEPTH_TEST);
-        glDisable(GL_STENCIL_TEST); // because we didn't care about forward stuff earlier, the stencil would just reject them, plus we dont even need it
-        setupObjectShader(scene);
-        if (!forwardRenders.isEmpty() || !transparentObjects.isEmpty()) {
-            uploadLights(objectShader, camera.getOwner().transform.getPosition());
-        }
-
-        // because we r gonna blend again, we HAVE to blend from far things to close things, if we do the opposite, the closest thing would just blend with the skybox or something
-        Vector3f camPos = camera.getOwner().transform.getPosition();
-        transparentObjects.sort((a, b) -> Float.compare(
-                b.transform.getPosition().distanceSquared(camPos),
-                a.transform.getPosition().distanceSquared(camPos)
-        ));
-
-
-
-        if (!renderingMode.equals(RenderMode.MODE_DEFERRED_ONLY)) {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(true);
-            for (GameObject object : forwardRenders) drawObject(object);
-            for (GameObject object : transparentObjects) {
-                glEnable(GL_CULL_FACE); // back faces render first, front last so it blends correctly, otherwise the back will disappear due to depth testing
-                glCullFace(GL_FRONT);
-                drawModel(object.getComponent(ModelComponent.class));
-                glCullFace(GL_BACK);
-                drawModel(object.getComponent(ModelComponent.class));
-                glDisable(GL_CULL_FACE);
+            if (!object.hasComponent(ModelComponent.class)) continue;
+            ModelComponent mc = object.getComponent(ModelComponent.class);
+            if (mc.getRenderMethod() == RenderMethod.RENDER_SKIP) continue;
+            if (mc.castsShadow()) frameContext.shadowingObjects.add(object);
+            if (mc.material.isTransparent()) {
+                frameContext.transparentForwardObjects.add(object);
+            } else {
+                if (mc.getRenderMethod() == RenderMethod.RENDER_DEFERRED) frameContext.deferredObjects.add(object);
+                else frameContext.opaqueForwardObjects.add(object);
             }
         }
 
-        if (engine.getIO("bloom")) {
-            bloomer.bakeBloom(postProcessor.getColorTexture());
-            postProcessor.render(bloomer.getBakedBloomTex());
-        } else {
-            postProcessor.render(-1);
 
+
+        for (RenderPass pass : renderPasses) {
+            long start = System.nanoTime();
+            pass.pass(frameContext);
+            long elapsed = System.nanoTime() - start;
+            double milliseconds = elapsed / 1_000_000.0;
+            pass.updatePassTime((long) milliseconds);
         }
-        engine.setWindowTitle("SharkEngine " + engine.version);
+
     }
 
-    private void gBufferPass(GameObject object) {
-        for (GameObject child : object.children) gBufferPass(child);
-        if (!object.hasComponent(ModelComponent.class)) return;
-        if (object.renderMethod == RenderMethod.RENDER_FORWARD) {
-            forwardRenders.add(object);
-            return;
+    public int bindTexture2D(ShaderService.Shader shader, TextureSlot slot, int textureId, int unit) {
+        boolean hasTexture = textureId != -1;
+        shader.setInt(slot.useUniform, hasTexture ? 1 : 0);
+        if (hasTexture) {
+            glActiveTexture(GL_TEXTURE0 + unit);
+            glBindTexture(GL_TEXTURE_2D, textureId);
+            shader.setInt(slot.texUniform, unit);
+            return unit + 1;
         }
-        ModelComponent model = object.getComponent(ModelComponent.class);
-        if (model.material.isTransparent()) return;
-        if (engine.getIO("frustum_culling") && !camera.inFrustum(object, engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !object.isDebuggingObject) return;
-        drawGModel(model);
-        counter++;
-    }
-
-    private void drawGModel(ModelComponent model) {
-        if (!model.visible) return;
-        glBindVertexArray(model.vao);
-        gBufferShader.setMat4("uModel",model.getOwner().transform.calculateWorldMatrix());
-        gBufferShader.setVec3("albedo", model.material.albedo);
-        gBufferShader.setFloat("metalness", model.material.metalness);
-        gBufferShader.setFloat("roughness", model.material.roughness);
-        gBufferShader.setVec3("emissive", model.material.emissive);
-        gBufferShader.setFloat("alphaMaskThreshold", model.material.alphaMaskThreshold);
-        gBufferShader.setInt("alphaCutout", model.material.alphaCutout ? 1 : 0);
-        gBufferShader.setFloat("emissiveStrength", model.material.emissiveStrength);
-        gBufferShader.setFloat("opacity", model.material.opacity);
-        boolean isPacked = (model.material.roughnessTex == model.material.metalnessTex) && (model.material.roughnessTex != -1);
-        gBufferShader.setInt("isPackedORM", isPacked ? 1 : 0);
-        int unit = 0;
-        unit = bindTexture2D(gBufferShader, TEX_ALBEDO, model.material.albedoTex, unit);
-        if (isPacked) {
-            unit = bindTexture2D(gBufferShader, TEX_ROUGHNESS, model.material.metalnessTex, unit);
-        } else {
-            unit = bindTexture2D(gBufferShader, TEX_ROUGHNESS, model.material.roughnessTex, unit);
-            unit = bindTexture2D(gBufferShader, TEX_METALNESS, model.material.metalnessTex, unit);
-        }
-        unit = bindTexture2D(gBufferShader, TEX_NORMAL, model.material.normalTex, unit);
-        unit = bindTexture2D(gBufferShader, TEX_EMISSIVE, model.material.emissiveTex, unit);
-        unit = bindTexture2D(gBufferShader, TEX_AO, model.material.aoTex, unit);
-        unit = bindTexture2D(gBufferShader, TEX_ALPHA_MASK, model.material.alphaMaskTex, unit);
-        bindTexture2D(gBufferShader, TEX_OPACITY, model.material.opacityTex, unit);
-        uploadBoneMatrices(gBufferShader, model);
-        glDrawElements(model.drawMode == DrawMode.TRIANGLES ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-
-    private void setupObjectShader(Scene scene) {
-        Scene.GlobalSceneLight gsl = scene.lights.globalLight;
-        objectShader.use();
-        objectShader.setInt("renderingMode", renderingMode.ordinal());
-        objectShader.setVec3("cameraPos", camera.getOwner().transform.getPosition());
-        objectShader.setVec3("dlDirection", gsl.direction);
-        objectShader.setVec3("dlColor", gsl.color);
-        objectShader.setVec3("ambient", gsl.ambient);
-        objectShader.setFloat("dlIntensity", gsl.intensity);
-        objectShader.setInt("dlEnabled", gsl.enabled ? 1 : 0);
-        objectShader.setInt("globalShadowEnabled", gsl.castShadow ? 1 : 0);
-        objectShader.setMat4("globalLightSpaceMatrix", gsl.calcLightSpace(engine));
-        objectShader.setVec3("skyColor", skycolor);
-        glActiveTexture(GL_TEXTURE30);
-        glBindTexture(GL_TEXTURE_2D, gsl.shadowMap.depthTexture);
-        objectShader.setInt("globalShadowTex", 30);
-    }
-
-    private void renderSkybox() {
-        if (activeScene.environment.activeSkybox == null || !activeScene.environment.skyboxEnabled) return;
-        if (!activeScene.environment.activeSkybox.hasComponent(SkyboxComponent.class)) {
-            Logger.warning(activeScene.getName() + "'s active Skybox is invalid! disabling skybox");
-            activeScene.environment.skyboxEnabled = false;
-            return;
-        }
-        SkyboxComponent skybox = activeScene.environment.activeSkybox.getComponent(SkyboxComponent.class);
-        glDepthFunc(GL_LEQUAL);
-        glDepthMask(false);
-        glEnable(GL_DEPTH_TEST);
-        skyboxShader.use();
-        skyboxShader.setVec3("sunDir", activeScene.lights.globalLight.direction);
-        skyboxShader.setFloat("time", (float)glfwGetTime());
-        glBindVertexArray(skybox.vao);
-        if (skybox.getTextureID() != -1) {
-            skyboxShader.setInt("useSkyboxTex", 1);
-            glActiveTexture(GL_TEXTURE28);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, skybox.getTextureID());
-            skyboxShader.setInt("skyboxTex", 28);
-        } else {
-            skyboxShader.setInt("useSkyboxTex", 0);
-        }
-        skybox.computeSkyColor(activeScene.lights.globalLight.direction, skycolor);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-        glBindVertexArray(0);
-        glDepthMask(true);
-        glDepthFunc(GL_LESS);
-    }
-
-    /**This always renders in the forward pass*/
-    private void drawObject(GameObject object) {
-        for (GameObject child : object.children) drawObject(child);
-        if (object.hasComponent(ModelComponent.class)) {
-            ModelComponent model = object.getComponent(ModelComponent.class);
-            if (!camera.inFrustum(object, engine.getWindowAspectRatio(), model.bounds.boundingRadius) && engine.getIO("frustum_culling") && !object.isDebuggingObject) return;
-            if ((model.material.isMasked() || (model.material.opacity >= 1.0f && model.material.opacityTex == -1))) {
-                drawModel(model);
-                counter++;
-            }
-        }
-    }
-
-
-    /**Renders given object alongside all its children*/
-    public void renderObject(GameObject object) {
-        if (renderQueue.contains(object) && engine.devMode) Logger.warning("Drawing " + object.getName() + " twice!");
-        renderQueue.add(object);
+        return unit;
     }
 
     private AnimationComponent findAnimComp(GameObject go) {
@@ -474,7 +372,7 @@ public class Renderer {
         return null;
     }
 
-    private void uploadBoneMatrices(ShaderService.Shader shader, ModelComponent model) {
+    public void uploadBoneMatrices(ShaderService.Shader shader, ModelComponent model) {
         if (model.boneIds == null) {
             shader.setInt("uSkinned", 0);
             return;
@@ -496,42 +394,8 @@ public class Renderer {
         shader.setInt("uSkinned", 1);
     }
 
-    private void drawModel(ModelComponent model) {
-        if (!model.visible) return;
-        glBindVertexArray(model.vao);
-        objectShader.setInt("lightEnabled", model.material.enabled ? 1 : 0);
-        objectShader.setMat4("uModel", model.getOwner().transform.calculateWorldMatrix());
-        objectShader.setVec3("albedo", model.material.albedo);
-        objectShader.setFloat("metalness", model.material.metalness);
-        objectShader.setFloat("roughness", model.material.roughness);
-        objectShader.setVec3("emissive", model.material.emissive);
-        objectShader.setFloat("alphaMaskThreshold", model.material.alphaMaskThreshold);
-        objectShader.setInt("alphaCutout", model.material.alphaCutout ? 1 : 0);
-        objectShader.setFloat("emissiveStrength", model.material.emissiveStrength);
-        objectShader.setFloat("opacity", model.material.opacity);
-        boolean isPacked = (model.material.roughnessTex == model.material.metalnessTex) && (model.material.roughnessTex != -1);
-        objectShader.setInt("isPackedORM", isPacked ? 1 : 0);
-        int unit = 0;
-        unit = bindTexture2D(objectShader, TEX_ALBEDO, model.material.albedoTex, unit);
-        if (isPacked) {
-            unit = bindTexture2D(objectShader, TEX_ROUGHNESS, model.material.metalnessTex, unit);
-        } else {
-            unit = bindTexture2D(objectShader, TEX_ROUGHNESS, model.material.roughnessTex, unit);
-            unit = bindTexture2D(objectShader, TEX_METALNESS, model.material.metalnessTex, unit);
-        }
-        unit = bindTexture2D(objectShader, TEX_NORMAL, model.material.normalTex, unit);
-        unit = bindTexture2D(objectShader, TEX_EMISSIVE, model.material.emissiveTex, unit);
-        unit = bindTexture2D(objectShader, TEX_AO, model.material.aoTex, unit);
-        unit = bindTexture2D(objectShader, TEX_ALPHA_MASK, model.material.alphaMaskTex, unit);
-        bindTexture2D(objectShader, TEX_OPACITY, model.material.opacityTex, unit);
-        uploadBoneMatrices(objectShader, model);
-        glDrawElements(model.drawMode == DrawMode.TRIANGLES ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-
-    private void uploadLights(ShaderService.Shader shader, Vector3f sortPos) {
-        activeScene.lights.getLights(thelights);
-        thelights.sort((a, b) -> {
+    public void uploadLights(ShaderService.Shader shader, Vector3f sortPos, List<LightComponent> lights) {
+        lights.sort((a, b) -> {
             boolean aNull = a.getOwner() == null;
             boolean bNull = b.getOwner() == null;
             if (aNull && bNull) return 0;
@@ -543,21 +407,29 @@ public class Renderer {
             );
         });
 
-        int liveCount = 0;
-        for (LightComponent light : thelights) {
-            if (light.getOwner() == null) break;
-            liveCount++;
-        }
+        int liveCount = lights.size();
+        boolean bindless = engine.getShaderService().bindlessTexturesSupported;
+
+        int cookieCap = bindless ? MAX_COOKIE_LIGHTS : FALLBACK_COOKIE_CAP;
+        int shadowCap = bindless ? MAX_SHADOW_MAPS : FALLBACK_SHADOW_CAP;
+
+        long dummy2DHandle = bindless ? engine.getShaderService().makeBindless(dummyDepthTex).getHandle() : 0;
+        long dummyCubeHandle = bindless ? engine.getShaderService().makeBindless(dummyDepthCubeTex).getHandle() : 0;
 
         ByteBuffer buf = lightSSBO.beginUpload(liveCount * LIGHT_STRUCT_BYTES);
         int cookieSlot = 0;
+        int shadowSlot = 0;
+        boolean shadowsEnabled = engine.getIO("shadows");
         for (int i = 0; i < liveCount; i++) {
-            LightComponent light = thelights.get(i);
+            LightComponent light = lights.get(i);
             Vector3f pos = light.getOwner().transform.getPosition();
             Vector3f off = light.offset;
 
-            boolean wantsCookie = light.type == LightComponent.LightType.SPOT_LIGHT && light.lightCookieTex != -1;
-            boolean boundCookie = wantsCookie && cookieSlot < MAX_COOKIE_LIGHTS;
+            boolean isSpot = light.type == LightComponent.LightType.SPOT_LIGHT;
+
+            boolean wantsCookie = isSpot && light.lightCookieTex != -1;
+            boolean boundCookie = wantsCookie && cookieSlot < cookieCap;
+            boolean boundShadow = light.castShadow && shadowsEnabled && shadowSlot < shadowCap;
 
             buf.putFloat(pos.x + off.x).putFloat(pos.y + off.y).putFloat(pos.z + off.z).putFloat(light.range);
             buf.putFloat(light.color.x).putFloat(light.color.y).putFloat(light.color.z).putFloat(light.intensity);
@@ -566,125 +438,112 @@ public class Renderer {
             buf.putFloat(light.quadratic);
             buf.putFloat(light.spotLightInnerCutoff);
             buf.putFloat(light.spotLightOuterCutoff);
-            buf.putInt(light.type == LightComponent.LightType.SPOT_LIGHT ? 1 : 0);
+            buf.putInt(isSpot ? 1 : 0);
             buf.putInt(boundCookie ? 1 : 0);
             buf.putInt(boundCookie ? cookieSlot : -1);
-            buf.putInt(0);
+            buf.putInt(boundShadow ? shadowSlot : -1);
+
+            // Only spot lights need a light-space matrix, pooint lights compute their shadow depth in the shader from position + range instead
+            Matrix4f lsMat = (boundShadow && isSpot) ? light.calcLightSpace() : new Matrix4f();
+            buf.putFloat(lsMat.m00()).putFloat(lsMat.m01()).putFloat(lsMat.m02()).putFloat(lsMat.m03());
+            buf.putFloat(lsMat.m10()).putFloat(lsMat.m11()).putFloat(lsMat.m12()).putFloat(lsMat.m13());
+            buf.putFloat(lsMat.m20()).putFloat(lsMat.m21()).putFloat(lsMat.m22()).putFloat(lsMat.m23());
+            buf.putFloat(lsMat.m30()).putFloat(lsMat.m31()).putFloat(lsMat.m32()).putFloat(lsMat.m33());
 
             if (boundCookie) {
-                int unit = COOKIE_TEX_UNIT_BASE + cookieSlot;
-                glActiveTexture(GL_TEXTURE0 + unit);
-                glBindTexture(GL_TEXTURE_2D, light.lightCookieTex);
-                shader.setInt(COOKIE_TEX_UNIFORMS[cookieSlot], unit);
+                bindTexture(shader, light.lightCookieTex, cookieSlot, bindless, true);
                 cookieSlot++;
             }
+            if (boundShadow) {
+                // we have 1 slot pointing to 2 arrays, so if we fill a slot in one array we have to also fill a dummy in the other
+                if (isSpot) {
+                    bindTexture(shader, light.spotLightShadowMap.depthTexture, shadowSlot, bindless, false);
+                    bindDummyCube(shader, shadowSlot, bindless, dummyCubeHandle);
+                } else {
+                    bindCubeTexture(shader, light.pointLightShadowMap.depthCubemap, shadowSlot, bindless);
+                    bindDummy2D(shader, shadowSlot, bindless, dummy2DHandle);
+                }
+                shadowSlot++;
+            }
         }
-        lightSSBO.endUpload();
 
+        for (int i = shadowSlot; i < shadowCap; i++) {
+            bindDummy2D(shader, i, bindless, dummy2DHandle);
+            bindDummyCube(shader, i, bindless, dummyCubeHandle);
+        }
+
+        lightSSBO.endUpload();
+        shader.setFloat("normalShadowBias", engine.getValue("shadows.normal_bias"));
         shader.setInt("lightCount", liveCount);
     }
 
+    private void bindDummy2D(ShaderService.Shader shader, int slot, boolean bindless, long dummyHandle) {
+        if (bindless) {
+            shader.setBindlessTexture("shadowTextures[" + slot + "]", dummyHandle);
+        } else {
+            int unit = SHADOW_TEX_UNIT_BASE + slot;
+            glActiveTexture(GL_TEXTURE0 + unit);
+            glBindTexture(GL_TEXTURE_2D, dummyDepthTex);
+            shader.setInt(SHADOW_TEX_UNIFORMS[slot], unit);
+        }
+    }
 
+    private void bindDummyCube(ShaderService.Shader shader, int slot, boolean bindless, long dummyHandle) {
+        if (bindless) {
+            shader.setBindlessTexture("shadowCubeTextures[" + slot + "]", dummyHandle);
+        } else {
+            int unit = SHADOW_CUBE_TEX_UNIT_BASE + slot;
+            glActiveTexture(GL_TEXTURE0 + unit);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, dummyDepthCubeTex);
+            shader.setInt(SHADOW_CUBE_TEX_UNIFORMS[slot], unit);
+        }
+    }
 
-    private int bindTexture2D(ShaderService.Shader shader, int texIndex, int textureId, int unit) {
-        boolean hasTexture = textureId != -1;
-        shader.setInt(TEX_USE_UNIFORMS[texIndex], hasTexture ? 1 : 0);
-        if (hasTexture) {
+    private void bindCubeTexture(ShaderService.Shader shader, int textureId, int slot, boolean bindless) {
+        if (bindless) {
+            long handle = engine.getShaderService().makeBindless(textureId).getHandle();
+            shader.setBindlessTexture("shadowCubeTextures[" + slot + "]", handle);
+        } else {
+            int unit = SHADOW_CUBE_TEX_UNIT_BASE + slot;
+            glActiveTexture(GL_TEXTURE0 + unit);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, textureId);
+            shader.setInt(SHADOW_CUBE_TEX_UNIFORMS[slot], unit);
+        }
+    }
+
+    private void bindTexture(ShaderService.Shader shader, int textureId, int slot, boolean bindless, boolean isCookie) {
+        if (bindless) {
+            long handle = engine.getShaderService().makeBindless(textureId).getHandle();
+            String name = isCookie ? "cookieTextures[" + slot + "]" : "shadowTextures[" + slot + "]";
+            shader.setBindlessTexture(name, handle);
+        } else {
+            int unit = (isCookie ? COOKIE_TEX_UNIT_BASE : SHADOW_TEX_UNIT_BASE) + slot;
             glActiveTexture(GL_TEXTURE0 + unit);
             glBindTexture(GL_TEXTURE_2D, textureId);
-            shader.setInt(TEX_UNIFORMS[texIndex], unit);
-            return unit + 1;
-        }
-        return unit;
-    }
-
-    private void renderDepth(GameObject obj) {
-        for (GameObject child : obj.children) renderDepth(child);
-        if (obj.hasComponent(ModelComponent.class)) {
-            ModelComponent model = obj.getComponent(ModelComponent.class);
-            if (!model.castShadow) return;
-            if (model.drawMode == DrawMode.LINES) return;
-            glBindVertexArray(model.vao);
-            if (model.material.albedoTex != -1) {
-                glActiveTexture(GL_TEXTURE4);
-                glBindTexture(GL_TEXTURE_2D, model.material.albedoTex);
-                depthShader.setInt("albedo", 4);
-                depthShader.setInt("hasAlbedo", 1);
-            } else {
-                depthShader.setInt("hasAlbedo", 0);
-            }
-
-            depthShader.setMat4("model", obj.transform.calculateWorldMatrix());
-            uploadBoneMatrices(depthShader, model);
-            glDisable(GL_CULL_FACE); // don't rely on winding for shadow casters
-            glDrawElements(GL_TRIANGLES, model.indexCount, GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
+            shader.setInt(isCookie ? COOKIE_TEX_UNIFORMS[slot] : SHADOW_TEX_UNIFORMS[slot], unit);
         }
     }
 
-    private void runShadowPass() {
-        if (activeScene.lights.globalLight.castShadow) {
-            Scene.GlobalSceneLight gsl = activeScene.lights.globalLight;
-            glViewport(0, 0, gsl.shadowMap.width, gsl.shadowMap.height);
-            glBindFramebuffer(GL_FRAMEBUFFER, gsl.shadowMap.fbo);
-            glClear(GL_DEPTH_BUFFER_BIT);
-            depthShader.use();
-            depthShader.setMat4("spaceMatrix", gsl.calcLightSpace(engine));
-            for (GameObject obj : sceneObjects) renderDepth(obj);
-        }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, postProcessor.getFBO());
-        glViewport(0, 0, engine.getWindowWidth(), engine.getWindowHeight());
+    public void renderObject(GameObject object) {
+        if (wireframeEnabled()) return;
+        if (renderQueue.contains(object) && engine.devMode) Logger.warning("Drawing " + object.getName() + " twice!");
+        this.renderQueue.add(object);
     }
 
-    private void runSSAOPass() {
-        glViewport(0, 0, engine.getWindowWidth(), engine.getWindowHeight());
-
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoBuffer.getFBO());
-        glClear(GL_COLOR_BUFFER_BIT);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_STENCIL_TEST);
-        ssaoShader.use();
-        ssaoShader.setFloat("radius", 0.4f);
-        ssaoShader.setFloat("bias", 0.025f);
-
-        ssaoShader.setFloat("noiseScaleX", engine.getWindowWidth() / 4.0f);
-        ssaoShader.setFloat("noiseScaleY", engine.getWindowHeight() / 4.0f);
-        gbuffer.bindTextures(0);
-        ssaoShader.setInt("gPosition", 0);
-        ssaoShader.setInt("gNormal", 1);
-        ssaoShader.setInt("kernelSize", (int) engine.getValue("ssao_samples"));
-
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, ssaoBuffer.getNoiseTexture());
-        ssaoShader.setInt("texNoise", 5);
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoBuffer.getBlurFBO());
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        ssaoBlurShader.use();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ssaoBuffer.getTexture());
-        ssaoBlurShader.setInt("ssaoInput", 0);
-        gbuffer.bindTextures(1);
-        ssaoBlurShader.setInt("gPosition", 1);
-
-        glBindVertexArray(quadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-        glViewport(0, 0, engine.getWindowWidth(), engine.getWindowHeight());
+    public void destroy() {
+        glDeleteFramebuffers(framebuffer);
+        glDeleteTextures(fbColorTexture);
+        glDeleteTextures(fbDepthTexture);
+        glDeleteTextures(fbStencilTexture);
+        for (RenderPass p : renderPasses) p.destroy();
     }
 
-    public void onResize(int width, int height) {
-        postProcessor.resize(width, height);
-        gbuffer.resize(width, height);
-        ssaoBuffer.resize(width, height);
-        bloomer.resize(width, height);
-
+    public void resize() {
+        glDeleteFramebuffers(framebuffer);
+        glDeleteTextures(fbColorTexture);
+        glDeleteTextures(fbDepthTexture);
+        glDeleteTextures(fbStencilTexture);
+        createFrameBuffer();
+        for (RenderPass p : renderPasses) p.reset();
     }
-
 }

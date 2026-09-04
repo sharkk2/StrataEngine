@@ -21,6 +21,18 @@ public class CameraComponent extends Component {
     private final Vector3f direction = new Vector3f(0, 0, -1);
     private final Vector3f positionOffset = new Vector3f();
     private final FrustumIntersection frustumIntersection = new FrustumIntersection();
+    private int colorGradingLUT = -1;
+    private int lensDirtTexture = -1;
+
+    public void setColorGradingLUT(int cubemapTex) {
+        if (cubemapTex >= 0) colorGradingLUT = cubemapTex;
+    }
+    public int getColorGradingLUT() {return colorGradingLUT;}
+    public void setLensDirtTexture(int texture) {
+        if (texture >= 0) lensDirtTexture = texture;
+    }
+    public int getLensDirtTexture() {return lensDirtTexture;}
+
     public enum CompassDirection {
         NORTH, SOUTH, EAST, WEST
     }

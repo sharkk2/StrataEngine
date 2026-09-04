@@ -1,8 +1,11 @@
 package org.sharkk2.sengine.core.systems;
 
+import org.luaj.vm2.LuaError;
 import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.Helpers;
+import org.sharkk2.sengine.core.classes.LuaScript;
 import org.sharkk2.sengine.core.classes.animation.Animation;
 import org.sharkk2.sengine.core.classes.animation.Joint;
 import org.sharkk2.sengine.core.classes.animation.JointTransform;
@@ -23,6 +26,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
@@ -46,6 +50,7 @@ public class AssetLoader {
     private final Engine engine;
     private final Map<String, Integer> textureCache = new HashMap<>();
     private final Map<String, CachedModel> modelCache = new HashMap<>();
+    private final Map<String, LuaScript> luaCache = new HashMap<>();
     public static final int TEXTURE_FLIPPED = 1;
     public static final int TEXTURE_BLENDED = 1 << 1;
     public static final int TEXTURE_REPEATED = 1 << 2;
@@ -78,6 +83,7 @@ public class AssetLoader {
 
 
     public void loadModel(String path, String id) {
+        long time = System.currentTimeMillis();
         if (modelCache.containsKey(id)) {
             Logger.warning("Asset (" + id + ") is already loaded");
             return;
@@ -121,6 +127,8 @@ public class AssetLoader {
 
         aiReleaseImport(aiScene);
         modelCache.put(id, cachedModel);
+        Logger.info("Loaded model asset '" + id + "' from: [" + path + "] (took " + Math.round(System.currentTimeMillis() - time) + "ms)");
+
     }
 
 
@@ -130,7 +138,7 @@ public class AssetLoader {
             Logger.error("Couldn't find an asset with ID (" + id + ")");
             throw new AssetNotFoundException("Couldn't find asset: " + id);
         }
-        return buildGameObject(cachedModel.root);
+        return engine.getThreadService().runMainThreadBlocking(() -> buildGameObject(cachedModel.root));
     }
 
     private Joint buildJointHierarchy(AINode aiNode, Map<String, Joint> jointsByName) {
@@ -181,7 +189,11 @@ public class AssetLoader {
             }
         }
 
-        for (CachedNode childNode : node.children) {go.addChild(buildGameObject(childNode));}
+        for (CachedNode childNode : node.children) {
+            go.addChild(
+                engine.getThreadService().runMainThreadBlocking(()->buildGameObject(childNode))
+            );
+        }
         return go;
     }
 
@@ -405,7 +417,7 @@ public class AssetLoader {
             int[] w = new int[1], h = new int[1];
             ByteBuffer pixels = extractEmbeddedPixels(aiScene, texIndex, w, h);
             if (pixels != null) {
-                int glId = uploadPixels(pixels, w[0], h[0], TEXTURE_BLENDED | TEXTURE_REPEATED | TEXTURE_FLIPPED);
+                int glId = engine.getThreadService().runMainThreadBlocking(() -> uploadPixels(pixels, w[0], h[0], TEXTURE_BLENDED | TEXTURE_REPEATED | TEXTURE_FLIPPED));
                 textureCache.put(cacheKey, glId);
                 return glId;
             }
@@ -415,7 +427,7 @@ public class AssetLoader {
         String fullPath = (directory + relativePath).replace('\\', '/');
         if (textureCache.containsKey(fullPath)) return textureCache.get(fullPath);
 
-        int glId = loadTexture(fullPath, TEXTURE_BLENDED | TEXTURE_REPEATED| TEXTURE_FLIPPED);
+        int glId = engine.getThreadService().runMainThreadBlocking(() -> loadTexture(fullPath, TEXTURE_BLENDED | TEXTURE_REPEATED| TEXTURE_FLIPPED));
         if (glId != -1) textureCache.put(fullPath, glId);
 
         return glId;
@@ -543,7 +555,7 @@ public class AssetLoader {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         } else {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         }
 
@@ -589,6 +601,22 @@ public class AssetLoader {
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_3D, 0);
+        return id;
+    }
+
+    public int loadEmptyDepthCubeTexture(int width, int height) {
+        int id = glGenTextures();
+        glBindTexture(GL_TEXTURE_CUBE_MAP, id);
+        for (int face = 0; face < 6; face++) {
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, (ByteBuffer) null);
+        }
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
         return id;
     }
 
@@ -760,6 +788,42 @@ public class AssetLoader {
 
         return scaled;
     }
+
+    /**Used when a lua script with the given name was already loaded and cached*/
+    public LuaScript loadLuaScript(String name) {
+        if (luaCache.containsKey(name)) return luaCache.get(name);
+        return null;
+    }
+
+    public LuaScript loadLuaScript(String path, String name, boolean nocache) {
+        if (luaCache.containsKey(name) && !nocache) return luaCache.get(name);
+        Path p = Path.of(path);
+        if (!p.getFileName().toString().endsWith(".lua")) {
+            Logger.error("Invalid Lua file: " + path);
+            return null;
+        }
+
+        try {
+            String source = Files.readString(Path.of(path));
+            if (!Helpers.validateLua(source)) {
+                Logger.error("Failed to load Lua script (" + path + "): failed to compile");
+                return null;
+            }
+            LuaScript script = new LuaScript(source, name, path);
+            if (!nocache) luaCache.put(name, script);
+            return script;
+        }
+        catch (IOException | LuaError e) {
+            Logger.error("Failed to load Lua script (" + path + "): " + e.getMessage());
+            return null;
+        }
+    }
+
+    public LuaScript loadLuaScript(String path, String name) {
+        return loadLuaScript(path, name, false);
+    }
+
+
 
 
     public class Primitives {

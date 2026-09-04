@@ -5,11 +5,12 @@ import org.lwjgl.opengl.GLDebugMessageCallback;
 import org.sharkk2.sengine.core.classes.ShadowMap;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.*;
+import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.debug.Debugger;
 import org.sharkk2.sengine.core.systems.debug.HardwareMonitor;
 import org.sharkk2.sengine.core.systems.gui.Imgui;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
-import org.sharkk2.sengine.core.systems.renderer.ShaderService;
+import org.sharkk2.sengine.core.systems.ShaderService;
 
 import java.nio.IntBuffer;
 import java.util.HashMap;
@@ -26,7 +27,7 @@ public class Engine {
     public boolean initialized = false;
     public final boolean devMode = true;
 
-    public final String version = "3.0.5";
+    public final String version = "3.1.0";
     private long windowHandle;
     private int windowWidth, windowHeight;
     private long monitor;
@@ -34,7 +35,8 @@ public class Engine {
     private long lastFrame = System.nanoTime();
     private int fps;
     private int totalFrameCount = 0;
-
+    private boolean showEngineSplash = true;
+    private int engineSplash;
 
     public final HashMap<String, Boolean> ioConfig = new HashMap<>();
     public final HashMap<String, Float> valueConfig = new HashMap<>();
@@ -51,6 +53,7 @@ public class Engine {
     private Imgui sengineImGui;
     private AudioService audioService;
     private CollisionService collisionService;
+    private ThreadService threadService;
 
     public float getWindowAspectRatio() {return (float) windowWidth / windowHeight;}
     public int getWindowWidth() {return windowWidth;}
@@ -81,12 +84,19 @@ public class Engine {
     public RaycastService getRaycastService() {return raycastService;};
     public AudioService getAudioService() {return audioService;}
     public CollisionService getCollisionService() {return collisionService;}
+    public ThreadService getThreadService() {return threadService;}
+    public void setResolution(int width, int height) {
+        valueConfig.put("res_width", (float)Math.max(width, 100));
+        valueConfig.put("res_height", (float)Math.max(height, 100));
+        renderer.resize();
+    }
 
     public Engine() {
         ioConfig.put("debug", true);
         ioConfig.put("vsync", false);
         ioConfig.put("ssao", true);
         ioConfig.put("bloom", true);
+        ioConfig.put("shadows", true);
         ioConfig.put("frustum_culling", false);
         ioConfig.put("mouse_visible", false);
 
@@ -99,6 +109,7 @@ public class Engine {
         ioConfig.put("apply_aces", false);
         ioConfig.put("color_grading", false);
         ioConfig.put("gamma_correct", true);
+        ioConfig.put("lens_dirt", true);
 
         ioConfig.put("light_shafts", true);
 
@@ -114,19 +125,23 @@ public class Engine {
         valueConfig.put("exposure", 1.3f);
         valueConfig.put("saturation", 1.6f);
         valueConfig.put("gamma", 2.2f);
-        valueConfig.put("shadows.quality", (float)ShadowMap.ShadowQuality.MEDIUM.ordinal()); // 0: HD, 1: 2K, 2: 4K
+        valueConfig.put("shadows.quality", (float) LightComponent.ShadowQuality.MEDIUM.ordinal()); // 0: HD, 1: 2K, 2: 4K
         valueConfig.put("shadows.distance", 26f);
+        valueConfig.put("shadows.normal_bias", 0.02f);
         valueConfig.put("ssao_samples", 20f);
         valueConfig.put("bloom_strength", 0.04f);
         valueConfig.put("bloom_spread", 0.009f);
         valueConfig.put("bloom_threshold", 1.0f);
         valueConfig.put("audio.doppler_intensity", 0.5f);
-        valueConfig.put("godray_exposure", 0.07f);
+        valueConfig.put("godray_exposure", 0.01f);
         valueConfig.put("godray_decay", 0.85f);
         valueConfig.put("godray_density", 0.75f);
-        valueConfig.put("godray_weight", 0.25f);
+        valueConfig.put("godray_weight", 0.3f);
         valueConfig.put("godray_max_brightness", 0.2f);
         valueConfig.put("gizmo.snap_amount", 0.5f);
+        valueConfig.put("res_width", 1920f);
+        valueConfig.put("res_height", 1080f);
+        valueConfig.put("lens_dirt.intensity", 10f);
     }
 
     public void initialize(int windowWidth, int windowHeight, Long monitor) throws EngineInitException {
@@ -161,6 +176,10 @@ public class Engine {
             glDebugMessageCallback(new GLDebugMessageCallback() {
                 @Override
                 public void invoke(int source, int type, int id, int severity, int length, long message, long userParam) {
+                    if (id == 131218) {
+                        return;
+                    }
+
                     String msg = GLDebugMessageCallback.getMessage(length, message);
                     Logger.info("[OpenGL DEBUG]: " + msg);
                     if (severity == GL_DEBUG_SEVERITY_HIGH) {
@@ -176,9 +195,6 @@ public class Engine {
             this.windowWidth = width;
             this.windowHeight = height;
             glViewport(0, 0, width, height);
-            if (renderer != null) {
-                renderer.onResize(width, height);
-            }
         });
 
         glfwSwapInterval(getIO("vsync") ? 1:0);
@@ -187,14 +203,16 @@ public class Engine {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 
-
-
-        debugger = new Debugger(this); //! init order must NOT be messed up
-        inputService = new InputService(this);
+        //! init order must NOT be messed up
+        debugger = new Debugger(this);
+        threadService = new ThreadService();
         shaderService = new ShaderService(this);
+        assetLoader = new AssetLoader(this);
+        engineSplash = assetLoader.loadTexture("src/main/resources/textures/strataEnginePng.png", AssetLoader.TEXTURE_BLENDED);
+        debugger.render2DTextureOverlay(engineSplash);
+        inputService = new InputService(this);
         raycastService = new RaycastService(this);
         cameraService = new CameraService(this);
-        assetLoader = new AssetLoader(this);
         renderer = new Renderer(this);
         collisionService = new CollisionService(this);
         audioService = new AudioService(this);
@@ -215,10 +233,10 @@ public class Engine {
         gameLoop();
         Logger.info("Cleaning up");
         shaderService.destroyAll();
-        renderer.getPostProcessor().destroy();
-        renderer.getGbuffer().destroy();
+        renderer.destroy();
         sceneManager.destroy();
         onDestroy();
+        threadService.shutdown();
         Logger.info("Destroying window");
         glfwDestroyWindow(windowHandle);
         glfwTerminate();
@@ -233,18 +251,21 @@ public class Engine {
             long frameStart = System.nanoTime();
             deltaTime = (frameStart - lastFrame) / 1_000_000_000f;
             lastFrame = frameStart;
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
             glfwPollEvents();
-            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
             audioService.update();
             if (sceneManager.isSceneRunning()) {
+                showEngineSplash = true;
                 sceneManager.getActiveScene().tick();
                 renderer.renderScene(sceneManager.getActiveScene());
+            } else if (showEngineSplash) {
+                debugger.render2DTextureOverlay(engineSplash);
             }
             inputService.update();
             if (devMode && sengineImGui != null) {
                 sengineImGui.renderImGui();
             }
+
+            threadService.drainTasks();
             glfwSwapBuffers(windowHandle);
             framecount++;
             totalFrameCount++;
