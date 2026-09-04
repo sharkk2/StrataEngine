@@ -1096,7 +1096,7 @@ public class AssetLoader {
             };
 
             ModelComponent box = new ModelComponent(vertices, normals, uvs, indices);
-            box.drawMode = Renderer.DrawMode.LINES;
+            box.setDrawMode(Renderer.DrawMode.LINES);
             box.material.enabled = false;
             return box;
         }
@@ -1115,7 +1115,7 @@ public class AssetLoader {
             };
 
             ModelComponent line = new ModelComponent(vertices, normals, uvs, indices);
-            line.drawMode = Renderer.DrawMode.LINES; // Set draw mode to GL_LINES
+            line.setDrawMode(Renderer.DrawMode.LINES);
             line.material.enabled = false;
             return line;
         }
@@ -1262,7 +1262,7 @@ public class AssetLoader {
                 }
             }
             ModelComponent mc = new ModelComponent(vertices, normals, uvs, indices);
-            mc.drawMode = Renderer.DrawMode.LINES;
+            mc.setDrawMode(Renderer.DrawMode.LINES);
             return mc;
         }
 
