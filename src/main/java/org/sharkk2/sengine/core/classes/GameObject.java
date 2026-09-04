@@ -268,7 +268,7 @@ public class GameObject {
     public Collection<Component> getComponents() { return components.values(); }
 
     public void detatchComponent(Component component) {
-        components.remove(component); component.onDetach();
+        components.remove(component.getClass()); component.onDetach();
     }
 
     public boolean hasComponent(Class<? extends Component> component) {return components.containsKey(component);}
