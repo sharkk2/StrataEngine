@@ -15,12 +15,19 @@ uniform vec3 dlColor;
 uniform vec3 ambient;
 uniform int dlEnabled;
 uniform float dlIntensity;
+uniform float dlNormalShadowBias;
 
 uniform int globalShadowEnabled;
 uniform sampler2DShadow globalShadowTex;
 uniform mat4 globalLightSpaceMatrix;
 
-uniform vec3 cameraPos;
+layout(std140, binding = 0) uniform Camera {
+    mat4 projection;
+    mat4 view;
+    mat4 inverseView;
+    vec3 cameraPos;
+};
+
 uniform vec3 skyColor;
 
 uniform sampler2D ssaoTex;
@@ -40,6 +47,7 @@ struct Light {
     float quadratic;
     float innerCutOff;
     float outerCutOff;
+    float shadowNormalBias;
     int type;
     int hasCookie;
     int cookieSlot;
@@ -48,7 +56,6 @@ struct Light {
 };
 
 uniform int lightCount;
-uniform float normalShadowBias = 0.02;
 
 layout(std430, binding = 2) readonly buffer LightBuffer {
     Light lights[];
@@ -79,11 +86,6 @@ layout(std140, binding = 1) uniform Fog {
     int blendSkyColor;
 };
 
-layout(std140, binding = 0) uniform Camera {
-    mat4 projection;
-    mat4 view;
-    mat4 inverseView;
-};
 
 uniform int renderingMode;
 const float PI = 3.14159265359;
@@ -223,7 +225,7 @@ void main() {
 
         float shadowFactor = 1.0;
         if (globalShadowEnabled == 1) {
-            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * normalShadowBias, 1.0);
+            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * dlNormalShadowBias, 1.0);
             shadowFactor = computeShadow(globalShadowTex, posLightSpace, norm, L);
         }
 
@@ -275,10 +277,10 @@ void main() {
         float localShadowFactor = 1.0;
         if (light.shadowSlot >= 0) {
             if (light.type == 1) {
-                vec4 posLightSpace = light.lightSpaceMatrix * vec4(vWorldPos + norm * normalShadowBias, 1.0);
+                vec4 posLightSpace = light.lightSpaceMatrix * vec4(vWorldPos + norm * light.shadowNormalBias, 1.0);
                 localShadowFactor = computeShadow(shadowTextures[light.shadowSlot], posLightSpace, norm, L);
             } else {
-                vec3 fragToLight = (vWorldPos + norm * normalShadowBias) - light.position;
+                vec3 fragToLight = (vWorldPos + norm * light.shadowNormalBias) - light.position;
                 localShadowFactor = computeCubeShadow(shadowCubeTextures[light.shadowSlot], fragToLight, light.range, norm, L);
             }
         }

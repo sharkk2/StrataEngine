@@ -13,6 +13,7 @@ uniform vec3 dlColor;
 uniform vec3 ambient;
 uniform int dlEnabled;
 uniform float dlIntensity;
+uniform float dlNormalShadowBias;
 
 uniform int globalShadowEnabled;
 uniform sampler2DShadow globalShadowTex;
@@ -42,7 +43,6 @@ uniform sampler2D alphaMaskTex;
 uniform float alphaMaskThreshold;
 uniform int alphaCutout;
 
-uniform vec3 cameraPos;
 uniform vec3 skyColor;
 
 uniform int useAlbedoTex;
@@ -70,6 +70,7 @@ struct Light {
     float quadratic;
     float innerCutOff;
     float outerCutOff;
+    float shadowNormalBias;
     int type;
     int hasCookie;
     int cookieSlot;
@@ -88,7 +89,7 @@ uniform sampler2DShadow shadowTextures[MAX_SHADOW_MAPS];
 uniform samplerCubeShadow shadowCubeTextures[MAX_SHADOW_MAPS];
 
 layout(std140, binding = 1) uniform Fog {
-    vec4 fogColor; // rgb used, fuck alpha
+    vec4 fogColor;
     float fogDensity;
     float fogStart;
     float fogEnd;
@@ -97,19 +98,26 @@ layout(std140, binding = 1) uniform Fog {
     int blendSkyColor;
 };
 
+layout(std140, binding = 0) uniform Camera {
+    mat4 uProjection;
+    mat4 uView;
+    mat4 uInverseView;
+    vec3 cameraPos;
+};
+
 
 uniform int renderingMode;
 const float PI = 3.14159265359;
 
 const vec2 poissonDisk[16] = vec2[](
-vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
-vec2(-0.094184101, -0.92938870), vec2( 0.34495938, 0.29387760),
-vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
-vec2(-0.38277543, 0.27676845), vec2( 0.97484398, 0.75648379),
-vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
-vec2(-0.26496911, -0.41893023), vec2( 0.79197514, 0.19090188),
-vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
-vec2( 0.19984126, 0.78641367), vec2( 0.14383161, -0.14100790)
+        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+        vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
+        vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+        vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+        vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+        vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+        vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
 );
 
 float rand(vec4 seed) {
@@ -124,9 +132,6 @@ float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lig
     projCoords = projCoords * 0.5 + 0.5;
     if (projCoords.z > 1.0) return 1.0;
 
-    float currentDot = max(dot(norm, lightDir), 0.0);
-    float tanAcos = sqrt(1.0 - currentDot * currentDot) / currentDot;
-    float bias = 0.0005;
     float angle = rand(vec4(gl_FragCoord.xyy, 1.0)) * 6.28318;
     float s = sin(angle);
     float c = cos(angle);
@@ -136,7 +141,7 @@ float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lig
     float shadow = 0.0;
     for (int i = 0; i < 16; i++) {
         vec2 offset = rotation * poissonDisk[i] * texelSize * spread;
-        shadow += texture(map, vec3(projCoords.xy + offset, projCoords.z - bias));
+        shadow += texture(map, vec3(projCoords.xy + offset, projCoords.z));
     }
     return shadow / 16.0;
 }
@@ -149,10 +154,28 @@ float computeCubeShadow(samplerCubeShadow map, vec3 fragToLight, float farPlane,
     float ndcDepth = (farPlane + near) / (farPlane - near) - (2.0 * farPlane * near) / ((farPlane - near) * localZ);
     float refDepth = ndcDepth * 0.5 + 0.5;
 
-    float bias = 0.0008;
-    return texture(map, vec4(fragToLight, refDepth - bias));
-}
+    vec3 dir = normalize(fragToLight);
+    vec3 up = abs(dir.y) < 0.999 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    vec3 tangent = normalize(cross(up, dir));
+    vec3 bitangent = cross(dir, tangent);
 
+    float angle = rand(vec4(gl_FragCoord.xyy, 2.0)) * 6.28318;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, s, -s, c);
+
+    float faceRes = float(textureSize(map, 0).x);
+    float texelWorldSize = 2.0 * localZ / faceRes;
+    float diskRadius = texelWorldSize * 1.5;
+
+    float shadow = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * poissonDisk[i] * diskRadius;
+        vec3 sampleDir = fragToLight + tangent * offset.x + bitangent * offset.y;
+        shadow += texture(map, vec4(sampleDir, refDepth));
+    }
+    return shadow / 16.0;
+}
 
 
 
@@ -183,7 +206,7 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float rough) {
 }
 
 void main() {
-    vec4 mat_albedo = (useAlbedoTex == 1) ? texture(albedoTex, vUV): vec4(albedo, opacity);
+    vec4 mat_albedo = (useAlbedoTex == 1) ? texture(albedoTex, vUV) : vec4(albedo, opacity);
     mat_albedo.rgb = pow(mat_albedo.rgb, vec3(2.2));
     float mat_metalness = metalness;
     float mat_roughness = roughness;
@@ -200,7 +223,7 @@ void main() {
     }
 
     mat_roughness = clamp(mat_roughness, 0.04, 1.0);
-    vec3 mat_emissive = (useEmissiveTex == 1)? pow(texture(emissiveTex, vUV).rgb, vec3(2.2)): emissive;
+    vec3 mat_emissive = (useEmissiveTex == 1) ? pow(texture(emissiveTex, vUV).rgb, vec3(2.2)) : emissive;
 
     if (useOpacityTex == 1) {
         mat_albedo.a = texture(opacityTex, vUV).r;
@@ -209,38 +232,9 @@ void main() {
     }
 
 
-    switch (renderingMode) {
-        case 1: FragColor = mat_albedo; break;
-        case 2: FragColor = vec4(vec3(mat_metalness), 1); break;
-        case 3: FragColor = vec4(vec3(mat_roughness), 1); break;
-        case 4: {
-            if (useNormalTex == 1) {FragColor = vec4(texture(normalTex, vUV).rgb * 2.0 - 1.0, 1);} break;
-        }
-        case 5: FragColor = vec4(mat_emissive, 1); break;
-        case 6: FragColor = vec4(vec3(mat_ao), 1); break;
-        case 7: FragColor = vec4(vec3(mat_albedo.a), 1); break;
-    }
-    if (renderingMode != 0) return;
-    if (useAlphaMaskTex == 1) {
-        if (texture(alphaMaskTex, vUV).r < alphaMaskThreshold) discard;
-    } else if (alphaCutout == 1) {
-        if (mat_albedo.a < alphaMaskThreshold) discard;
-    } else {
-        if (mat_albedo.a < 0.1f) discard;
-    }
-
-    if (lightEnabled == 0) {
-        FragColor = mat_albedo;
-        return;
-    }
-
     vec3 norm;
     if (useNormalTex == 1) {
         vec3 sampledNormal = texture(normalTex, vUV).rgb * 2.0 - 1.0;
-        if (renderingMode == 4) {
-            FragColor = vec4(sampledNormal, 1);
-            return;
-        }
 
         vec3 N = normalize(vNormal);
         vec3 dp1 = dFdx(vWorldPos);
@@ -256,6 +250,21 @@ void main() {
         norm = normalize(TBN * sampledNormal);
     } else {
         norm = normalize(vNormal);
+    }
+
+    switch (renderingMode) {
+        case 1: FragColor = mat_albedo; return;
+        case 2: FragColor = vec4(vec3(mat_metalness), 1); return;
+        case 3: FragColor = vec4(vec3(mat_roughness), 1); return;
+        case 4: FragColor = vec4(norm * 0.5 + 0.5, 1); return;
+        case 5: FragColor = vec4(mat_emissive, 1); return;
+        case 6: FragColor = vec4(vec3(mat_ao), 1); return;
+        case 7: FragColor = vec4(vec3(mat_albedo.a), 1); return;
+    }
+
+    if (lightEnabled == 0) {
+        FragColor = mat_albedo;
+        return;
     }
 
     vec3 V = normalize(cameraPos - vWorldPos);
@@ -279,14 +288,13 @@ void main() {
 
         float shadowFactor = 1.0;
         if (globalShadowEnabled == 1) {
-            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * 0.02, 1.0);
+            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * dlNormalShadowBias, 1.0);
             shadowFactor = computeShadow(globalShadowTex, posLightSpace, norm, L);
         }
 
         Lo += (diffuse + specular) * dlColor * NdotL * dlIntensity * shadowFactor;
     }
 
-    // Local Lights Calculation (Points/Spots)
     for (int i = 0; i < lightCount; i++) {
         Light light = lights[i];
         float dist = length(light.position - vWorldPos);
@@ -332,10 +340,10 @@ void main() {
         float localShadowFactor = 1.0;
         if (light.shadowSlot >= 0) {
             if (light.type == 1) {
-                vec4 posLightSpace = light.lightSpaceMatrix * vec4(vWorldPos + norm * 0.02, 1.0);
+                vec4 posLightSpace = light.lightSpaceMatrix * vec4(vWorldPos + norm * light.shadowNormalBias, 1.0);
                 localShadowFactor = computeShadow(shadowTextures[light.shadowSlot], posLightSpace, norm, L);
             } else {
-                vec3 fragToLight = vWorldPos - light.position;
+                vec3 fragToLight = (vWorldPos + norm * light.shadowNormalBias) - light.position;
                 localShadowFactor = computeCubeShadow(shadowCubeTextures[light.shadowSlot], fragToLight, light.range, norm, L);
             }
         }

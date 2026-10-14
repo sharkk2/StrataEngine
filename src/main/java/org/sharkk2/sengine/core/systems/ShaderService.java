@@ -14,10 +14,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static org.lwjgl.opengl.GL.getCapabilities;
 import static org.lwjgl.opengl.GL43.*;
@@ -80,7 +77,8 @@ public class ShaderService {
             for (int id : shaderIds) glAttachShader(program, id);
             glLinkProgram(program);
             if (glGetProgrami(program, GL_LINK_STATUS) == GL_FALSE) {
-                throw new ShaderLoadException("Failed to link " + type + " shader! (" + String.join(" - ", paths) + ")");
+                String log = glGetProgramInfoLog(program);
+                throw new ShaderLoadException("Failed to link " + type + " shader! (" + String.join(" - ", paths) + ")\n" + log);
             }
             return new Shader(program, type, paths);
         } finally {
@@ -99,6 +97,10 @@ public class ShaderService {
     }
 
     private int compile(int type, String src) {
+        if (src == null || src.isEmpty()) {
+            Logger.error("Shader failed to compile (" + src + ")");
+            throw new ShaderLoadException("Failed to compile shader! (empty src)");
+        }
         int shader = glCreateShader(type);
         glShaderSource(shader, src);
         glCompileShader(shader);
@@ -309,6 +311,8 @@ public class ShaderService {
         public enum ShaderType {DRAW, COMPUTE, GEOMETRY}
         public final ShaderType type;
         private final Map<String, Integer> locationCache = new HashMap<>();
+        private final Set<String> warned = new HashSet<>();
+
         private Shader(int id, ShaderType type, String... paths) {
             this.id = id;
             this.type = type;
@@ -321,32 +325,54 @@ public class ShaderService {
 
         public void use() {glUseProgram(id); }
         public int getId() {return id; }
-        public int loc(String name) {return locationCache.computeIfAbsent(name, n -> glGetUniformLocation(id, n));}
-        public void setInt(String name, int v) {glUniform1i(loc(name), v); }
-        public void setInt2(String name, int v1, int v2) {glUniform2i(loc(name), v1, v2); }
-        public void setInt3(String name, int v1, int v2, int v3) {glUniform3i(loc(name), v1, v2, v3); }
-        public void setInt4(String name, int v1, int v2, int v3, int v4) {glUniform4i(loc(name), v1, v2, v3, v4); }
-        public void setFloat(String name, float v) {glUniform1f(loc(name), v);}
-        public void setFloat2(String name, float v1, float v2) {glUniform2f(loc(name), v1, v2); }
-        public void setFloat3(String name, float v1, float v2, float v3) {glUniform3f(loc(name), v1, v2, v3); }
-        public void setFloat4(String name, float v1, float v2, float v3, float v4) {glUniform4f(loc(name), v1, v2, v3, v4); }
+        private int loc(String name) {
+            Integer cached = locationCache.get(name);
+            if (cached != null) return cached;
+
+            int l = glGetUniformLocation(id, name);
+            locationCache.put(name, l);
+            if (l == -1) {
+                Logger.error("[Shader " + id + "] uniform '" + name + "' not found (typo, or optimized out)");
+            }
+            return l;
+        }
+
+        public int getLocation(String name) {
+            if (glGetInteger(GL_CURRENT_PROGRAM) != id) {
+                if (warned.add(name)) {
+                    Logger.error("[Shader " + id + "] setting '" + name + "' but shader " + glGetInteger(GL_CURRENT_PROGRAM) + " is bound");
+                }
+                return -1;
+            }
+            return loc(name);
+        }
+
+        public void setInt(String name, int v) {glUniform1i(getLocation(name), v); }
+        public void setInt2(String name, int v1, int v2) {glUniform2i(getLocation(name), v1, v2); }
+        public void setInt3(String name, int v1, int v2, int v3) {glUniform3i(getLocation(name), v1, v2, v3); }
+        public void setInt4(String name, int v1, int v2, int v3, int v4) {glUniform4i(getLocation(name), v1, v2, v3, v4); }
+        public void setFloat(String name, float v) {glUniform1f(getLocation(name), v);}
+        public void setFloat2(String name, float v1, float v2) {glUniform2f(getLocation(name), v1, v2); }
+        public void setFloat3(String name, float v1, float v2, float v3) {glUniform3f(getLocation(name), v1, v2, v3); }
+        public void setFloat4(String name, float v1, float v2, float v3, float v4) {glUniform4f(getLocation(name), v1, v2, v3, v4); }
         public void setMat4(String name, Matrix4fc m) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                glUniformMatrix4fv(loc(name), false, m.get(stack.mallocFloat(16)));
+                glUniformMatrix4fv(getLocation(name), false, m.get(stack.mallocFloat(16)));
             }
         }
-        public void setVec2(String name, Vector2f v) {glUniform2f(loc(name), v.x, v.y);}
-        public void setVec3(String name, Vector3f v) {glUniform3f(loc(name), v.x, v.y, v.z);}
-        public void setVec4(String name, Vector4f v) {glUniform4f(loc(name), v.x, v.y, v.z, v.w);}
+        public void setVec2(String name, Vector2f v) {glUniform2f(getLocation(name), v.x, v.y);}
+        public void setVec3(String name, Vector3f v) {glUniform3f(getLocation(name), v.x, v.y, v.z);}
+        public void setVec4(String name, Vector4f v) {glUniform4f(getLocation(name), v.x, v.y, v.z, v.w);}
+        public void setBoolean(String name, boolean v) {glUniform1i(getLocation(name), v?1:0);}
         public void setBindlessTexture(String name, long handle) {
-            ARBBindlessTexture.glUniformHandleui64ARB(loc(name), handle);
+            ARBBindlessTexture.glUniformHandleui64ARB(getLocation(name), handle);
         }
 
         public void setBindlessTextures(String name, long[] handles) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 LongBuffer buf = stack.mallocLong(handles.length);
                 buf.put(handles).flip();
-                ARBBindlessTexture.glUniformHandleui64vARB(loc(name), buf);
+                ARBBindlessTexture.glUniformHandleui64vARB(getLocation(name), buf);
             }
         }
 

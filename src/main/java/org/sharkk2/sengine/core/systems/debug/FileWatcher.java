@@ -1,5 +1,7 @@
 package org.sharkk2.sengine.core.systems.debug;
 
+import org.sharkk2.sengine.Logger;
+
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.WatchEvent;

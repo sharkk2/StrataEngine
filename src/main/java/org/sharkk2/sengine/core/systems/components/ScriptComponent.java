@@ -4,48 +4,32 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
-import org.luaj.vm2.lib.jse.*;
+
 import org.luaj.vm2.*;
-import org.luaj.vm2.lib.jse.JsePlatform;
-import org.sharkk2.sengine.core.classes.LuaScript;
+import org.sharkk2.sengine.core.classes.DataDrawer;
+import org.sharkk2.sengine.core.systems.lua.LuaInstance;
+import org.sharkk2.sengine.core.systems.lua.LuaScript;
+import org.sharkk2.sengine.core.classes.Scene;
 
 public class ScriptComponent extends Component {
     private final Consumer<ScriptContext> script;
     public int runFrameInterval = 0;
     public int lastRunFrame = 0;
-    public final Map<String, Object> states = new HashMap<>();
     private final ScriptContext context;
-    private LuaScript lua;
+    private LuaInstance lua;
 
     public static class ScriptContext {
         private final ScriptComponent scomp;
+        public final DataDrawer data = new DataDrawer();
         public ScriptContext(ScriptComponent scomp) {this.scomp = scomp;}
-
-        public void state(String key, Object value) { scomp.states.put(key, value); }
-
-        @SuppressWarnings("unchecked")
-        public <T> T readState(String key) {
-            return (T) scomp.states.get(key);
-        }
-
-        @SuppressWarnings("unchecked")
-        public <T> T readState(String key, T def) {
-            return (T) scomp.states.getOrDefault(key, def);
-        }
-
-
-
-        public void removeState(String key) { scomp.states.remove(key); }
-        public void clearStates() { scomp.states.clear(); }
 
         public void setFrameRunInterval(int v) { scomp.runFrameInterval = v; }
         public int getFrameRunInterval() { return scomp.runFrameInterval; }
-        public Engine getEngine() { return scomp.getOwner().getEngine(); }
+        public Engine getEngine() {return scomp.getOwner().getEngine();}
+        public Scene getScene() {return scomp.getOwner().getEngine().getSceneManager().getActiveScene();}
     }
 
     public ScriptComponent(Consumer<ScriptContext> script) {
@@ -53,33 +37,29 @@ public class ScriptComponent extends Component {
         this.context = new ScriptContext(this);
     }
 
-    public ScriptComponent(LuaScript luaScript) {
-        this(luaScript, 0);
-    }
-
-    public ScriptComponent(LuaScript lua, int runFrameInterval) {
-        this.runFrameInterval = runFrameInterval;
-        this.context = new ScriptContext(this);
-
-        this.lua = lua;
-        if (lua == null) throw new LuaError("Lua script failed to load properly");
-        this.script = ctx -> {
-            try {
-                lua.getChunk().call();
-            } catch (LuaError e) {
-                if (lua.supressErrors) return;
-                Logger.error("Lua script (" + lua.name + ") error: " + e.getMessage());
-                lua.registerError(e.getMessage());
-            }
-        };
-    }
-
-
     public ScriptComponent(Consumer<ScriptContext> script, int frameInterval) {
         this.script = script;
         this.runFrameInterval = frameInterval;
         this.context = new ScriptContext(this);
     }
+
+    public ScriptComponent(LuaScript luaScript) {this(luaScript, 0);}
+
+    public ScriptComponent(LuaScript luaScript, int runFrameInterval) {
+        this(luaScript == null ? null : luaScript.newInstance(), runFrameInterval);
+    }
+
+    public ScriptComponent(LuaInstance lua) {this(lua, 0);}
+
+    public ScriptComponent(LuaInstance lua, int runFrameInterval) {
+        if (lua == null) throw new LuaError("Lua script failed to load properly");
+        this.runFrameInterval = runFrameInterval;
+        this.context = new ScriptContext(this);
+        this.lua = lua;
+        this.script = ctx -> lua.run();
+    }
+
+
 
     public Consumer<ScriptContext> getScript() { return script; }
     public ScriptContext getContext() { return context; }

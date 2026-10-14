@@ -9,7 +9,6 @@ import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
 import org.sharkk2.sengine.core.classes.exceptions.FrameBufferException;
 import org.sharkk2.sengine.core.classes.exceptions.RendererException;
-import org.sharkk2.sengine.core.systems.AssetLoader;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.AnimationComponent;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
@@ -56,7 +55,7 @@ public class Renderer {
 
     private static final int BONE_SSBO_BINDING = 3;
     private static final int INITIAL_BONE_CAPACITY = 128; // joints
-    private static final int LIGHT_STRUCT_BYTES = 144;
+    private static final int LIGHT_STRUCT_BYTES = 160;
     private static final int LIGHT_SSBO_BINDING = 2; // camera UBO=0, fog UBO=1
     private static final int INITIAL_LIGHT_CAPACITY = 128;
     private static final int MAX_COOKIE_LIGHTS = 64;
@@ -96,7 +95,6 @@ public class Renderer {
     private final int dummyDepthCubeTex;
 
     private boolean wireframe = false;
-    private int counter = 0;
     private int lastRenderCount = 0;
     private int framebuffer;
     private int fbColorTexture;
@@ -104,17 +102,23 @@ public class Renderer {
     private int fbStencilTexture;
 
     private final FrameContext frameContext = new FrameContext();
-    private final List<GameObject> renderQueue = new ArrayList<>();
+    private final List<ModelComponent> renderQueue = new ArrayList<>();
     private final List<RenderPass> renderPasses = new ArrayList<>();
-    private final List<GameObject> sceneObjects = new ArrayList<>();
-    private final ArrayDeque<GameObject> toVisit = new ArrayDeque<>();
+
+    private final List<LightComponent> lights = new ArrayList<>();
+    private final List<ModelComponent> models = new ArrayList<>();
+    private final List<ModelComponent> eligibleAnimModels = new ArrayList<>();
+    private final Map<String, Batch> batches = new HashMap<>();
+
+    private Matrix4f[][] boneSets = new Matrix4f[32][];
+
 
 
     public Renderer(Engine engine) {
         this.engine = engine;
-        cameraUBO = engine.getShaderService().createUBO("camera", 0, 192);
+        cameraUBO = engine.getShaderService().createUBO("camera", 0, 240);
         fogUBO = engine.getShaderService().createUBO("fog", 1, 48);
-        objectShader = engine.getShaderService().get("shaders/objectVert.glsl", "shaders/ObjectFrag.glsl");
+        objectShader = engine.getShaderService().get("shaders/objectVert.glsl", "shaders/objectFrag.glsl");
         boneMatrixSSBO = engine.getShaderService().createSSBO("boneMatrices", BONE_SSBO_BINDING, INITIAL_BONE_CAPACITY * 64);
         lightSSBO = engine.getShaderService().createSSBO("lights", LIGHT_SSBO_BINDING, INITIAL_LIGHT_CAPACITY * LIGHT_STRUCT_BYTES);
         dummyDepthTex = engine.getAssetLoader().loadEmptyDepthTexture(1, 1);
@@ -133,6 +137,23 @@ public class Renderer {
 
     }
 
+    public static class Batch {
+        public final List<ModelComponent> models = new ArrayList<>();
+        public final String id;
+        public Batch(String id) {this.id = id;}
+    }
+    // so how this works is quite simple,
+    // when a model component's material textures or vao change, it creates a batch key of those textures + a key of the vao contents, finds or creates a batch with it and joins it.
+    // during rendering, these batches will be passed along in batch lists instead of model component list inside the frame context and instanced, or used directly as containers.
+
+    public Batch createRenderBatch(String id) {
+        Batch batch = new Batch(id);
+        batches.put(id, batch);
+        return batch;
+    }
+
+    public Batch getRenderBatch(String id) {return batches.get(id);}
+    public Batch removeRenderBatch(String id) {return batches.remove(id);}
 
     public void enableWireframe(boolean v) {
         wireframe = v;
@@ -246,27 +267,26 @@ public class Renderer {
         }
     }
 
-    private void drawBareObject(GameObject object) {
-        objectShader.use();
-        CameraComponent camera = engine.getCameraService().getPrimaryCamera();
-        for (GameObject child : object.children) drawBareObject(child);
-        if (object.hasComponent(ModelComponent.class)) {
-            ModelComponent model = object.getComponent(ModelComponent.class);
-            if (!camera.inFrustum(object, engine.getWindowAspectRatio(), model.bounds.boundingRadius) && engine.getIO("frustum_culling") && !object.isDebuggingObject) return;
-            if (!model.isVisible()) return;
-            glBindVertexArray(model.vao);
-            objectShader.setMat4("uModel", model.getOwner().transform.calculateWorldMatrix());
-            glDrawElements(model.getDrawMode() == DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
-            counter++;
 
-        }
+    private void drawBareModel(ModelComponent model) {
+        objectShader.use();
+        Scene scene = engine.getSceneManager().getActiveScene();
+        if (scene == null) return;
+        CameraComponent camera = scene.getPrimaryCamera();
+        if (camera == null) return;
+        if (!camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && engine.getIO("frustum_culling") && !model.getOwner().isDebuggingObject) return;
+        if (model.getRenderMethod() == RenderMethod.RENDER_SKIP) return;
+        glBindVertexArray(model.vao);
+        objectShader.setMat4("uModel", model.getOwner().transform.calculateWorldMatrix());
+        glDrawElements(model.getDrawMode() == DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
     }
 
     public void renderScene(Scene scene) {
+        engine.getDebugger().beginTimer();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         lastRenderCount = frameContext.renderCounter;
-        CameraComponent camera = engine.getCameraService().getPrimaryCamera();
+        CameraComponent camera = scene.getPrimaryCamera();
         if (camera == null) {
             Logger.warning("No active camera found");
             return;
@@ -280,12 +300,13 @@ public class Renderer {
         frameContext.defaultStencilTexture = fbStencilTexture;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            FloatBuffer buf = stack.mallocFloat(48);
+            FloatBuffer buf = stack.mallocFloat(60);
             camera.getProjectionMatrix(engine.getWindowAspectRatio()).get(0, buf);
             camera.getViewMatrix().get(16, buf);
             camera.getViewMatrix().invert().get(32, buf);
+            camera.getOwner().transform.getPosition().get(48, buf);
             cameraUBO.upload(buf);
-        } // uploading cam ubo "each matrix is 16 floats, times 4 is 64 bytes"
+        } // uploading cam ubo "each matrix is 16 floats (48 floats total), times 4 is 192 bytes" then a 3D vec for 3 floats "12 bytes" (totaling 208 bytes)
 
         Scene.Fog fog = scene.environment.fog;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -305,51 +326,67 @@ public class Renderer {
 
         frameContext.scene = scene;
         frameContext.mainCamera = camera;
-
-        glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
+        engine.getComponentRegistry().getComponents(ModelComponent.class, models);
         if (wireframe) {
+            // fixme: wireframe mode is broken, i knew the reason 3 days ago and planned to fix it the next day but next day never came and now i forgot the reason
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            for (GameObject object : scene.getObjects()) {drawBareObject(object);}
+            for (ModelComponent model : models) {drawBareModel(model);}
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             return;
         } // if wireframe on, if we used deferred or post processing, the 2D fullscreen quads will cover the screen, plus its useless cuz its just lines
 
         // collecting objects
-        scene.getObjects(sceneObjects);
-        toVisit.addAll(sceneObjects);
-        toVisit.addAll(renderQueue);
-        renderQueue.clear();
-        while (!toVisit.isEmpty()) {
-            GameObject object = toVisit.pop();
-            toVisit.addAll(object.children);
-            if (object.hasComponent(LightComponent.class)) {
-                LightComponent light = object.getComponent(LightComponent.class);
-                frameContext.lights.add(light);
-                if (light.castShadow) frameContext.shadowLights.add(light);
-            }
+        // using the registry i found that it's 1.92x faster than finding models manually, but it's not even noticeable cuz both approaches were under a tenth of a millisecond
+        // i should do this comparison again with a higher number of models
+        engine.getComponentRegistry().getComponents(LightComponent.class, lights);
+        for (LightComponent light : lights) {
+            frameContext.lights.add(light);
+            if (light.castShadow) frameContext.shadowLights.add(light);
+        }
 
-            if (!object.hasComponent(ModelComponent.class)) continue;
-            ModelComponent mc = object.getComponent(ModelComponent.class);
-            if (mc.getRenderMethod() == RenderMethod.RENDER_SKIP) continue;
-            if (mc.castsShadow()) frameContext.shadowingObjects.add(object);
-            if (mc.material.isTransparent()) {
-                frameContext.transparentForwardObjects.add(object);
+        // todo: have the frameContext carry batch lists with their models checked so passes do not need to manually do this
+        eligibleAnimModels.clear();
+        for (ModelComponent model : models) { // you have ALL the model components in the entire game here
+            if (!scene.containsObject(model.getOwner().getRoot().id) && !renderQueue.contains(model)) {
+                continue;
+            }
+            if (model.getRenderMethod() == RenderMethod.RENDER_SKIP) continue;
+            if (camera.invisibleModels.contains(model)) continue;
+            eligibleAnimModels.add(model);
+            if (model.castsShadow() && model.getDrawMode() != Renderer.DrawMode.LINES) frameContext.shadowingModels.add(model);
+            if (engine.getIO("frustum_culling") && !camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !model.getOwner().isDebuggingObject) continue;
+            if (model.material.isTransparent()) {
+                frameContext.transparentForwardModels.add(model);
             } else {
-                if (mc.getRenderMethod() == RenderMethod.RENDER_DEFERRED) frameContext.deferredObjects.add(object);
-                else frameContext.opaqueForwardObjects.add(object);
+                if (model.getRenderMethod() == RenderMethod.RENDER_DEFERRED) frameContext.deferredModels.add(model);
+                else frameContext.opaqueForwardModels.add(model);
             }
         }
+        uploadBoneMatrices(eligibleAnimModels, frameContext.animationBoneOffsets);
+        renderQueue.clear();
+        frameContext.preparationTimeMs = engine.getDebugger().endTimer();
+        for (RenderPass pass : renderPasses) {pass.pass(frameContext);}
+    }
 
-
-
-        for (RenderPass pass : renderPasses) {
-            long start = System.nanoTime();
-            pass.pass(frameContext);
-            long elapsed = System.nanoTime() - start;
-            double milliseconds = elapsed / 1_000_000.0;
-            pass.updatePassTime((long) milliseconds);
+    public int getColorTexture() { return fbColorTexture; }
+    public int getPassCount() {return renderPasses.size();}
+    public RenderPass getRenderPass(String passname) {
+        for (RenderPass p : renderPasses) {
+            if (p.name.equals(passname)) return p;
         }
+        return null;
+    }
 
+
+    public RenderPass getRenderPass(int index) {
+        try {
+            return renderPasses.get(index);
+        } catch (Exception e) {
+            Logger.error("Invalid index");
+            return null;
+        }
     }
 
     public int bindTexture2D(ShaderService.Shader shader, TextureSlot slot, int textureId, int unit) {
@@ -372,29 +409,52 @@ public class Renderer {
         return null;
     }
 
-    public void uploadBoneMatrices(ShaderService.Shader shader, ModelComponent model) {
-        if (model.boneIds == null) {
-            shader.setInt("uSkinned", 0);
-            return;
+
+
+    private void uploadBoneMatrices(List<ModelComponent> models, Map<ModelComponent, Integer> target) {
+        target.clear();
+        int count = models.size();
+        if (count == 0) return;
+
+        if (boneSets.length < count) {
+            int newSize = Math.max(count, boneSets.length * 2);
+            boneSets = new Matrix4f[newSize][];
         }
 
-        AnimationComponent anim = findAnimComp(model.getOwner());
-        Matrix4f[] matrices = anim != null ? anim.getBoneMatrices() : null;
-        if (matrices == null) {
-            shader.setInt("uSkinned", 0);
-            return;
+        int totalMatrices = 0;
+        for (int i = 0; i < count; i++) {
+            ModelComponent model = models.get(i);
+            AnimationComponent anim = findAnimComp(model.getOwner());
+            Matrix4f[] matrices = anim != null ? anim.getBoneMatrices() : null;
+            boneSets[i] = matrices;
+
+            if (matrices != null) {
+                target.put(model, totalMatrices);
+                totalMatrices += matrices.length;
+            } else {
+                target.put(model, -1);
+            }
         }
 
-        ByteBuffer buf = boneMatrixSSBO.beginUpload(matrices.length * 64);
-        FloatBuffer fbuf = buf.asFloatBuffer();
-        for (int i = 0; i < matrices.length; i++) matrices[i].get(i * 16, fbuf);
-        buf.position(matrices.length * 64);
+        ByteBuffer buf = boneMatrixSSBO.beginUpload(totalMatrices * 64);
+        int byteOffset = 0;
+
+        for (int i = 0; i < count; i++) {
+            Matrix4f[] matrices = boneSets[i];
+            if (matrices == null) continue;
+            for (Matrix4f m : matrices) {
+                m.get(byteOffset, buf);
+                byteOffset += 64;
+            }
+        }
+
+        buf.position(byteOffset);
         boneMatrixSSBO.endUpload();
-
-        shader.setInt("uSkinned", 1);
+        Arrays.fill(boneSets, 0, count, null);
     }
 
     public void uploadLights(ShaderService.Shader shader, Vector3f sortPos, List<LightComponent> lights) {
+        // sorting to prioritize texture slots for closer lights
         lights.sort((a, b) -> {
             boolean aNull = a.getOwner() == null;
             boolean bNull = b.getOwner() == null;
@@ -425,7 +485,7 @@ public class Renderer {
             Vector3f pos = light.getOwner().transform.getPosition();
             Vector3f off = light.offset;
 
-            boolean isSpot = light.type == LightComponent.LightType.SPOT_LIGHT;
+            boolean isSpot = light.getType() == LightComponent.LightType.SPOT_LIGHT;
 
             boolean wantsCookie = isSpot && light.lightCookieTex != -1;
             boolean boundCookie = wantsCookie && cookieSlot < cookieCap;
@@ -438,10 +498,13 @@ public class Renderer {
             buf.putFloat(light.quadratic);
             buf.putFloat(light.spotLightInnerCutoff);
             buf.putFloat(light.spotLightOuterCutoff);
+            buf.putFloat(light.shadowNormalBias);
+
             buf.putInt(isSpot ? 1 : 0);
             buf.putInt(boundCookie ? 1 : 0);
             buf.putInt(boundCookie ? cookieSlot : -1);
             buf.putInt(boundShadow ? shadowSlot : -1);
+            buf.putInt(0).putInt(0).putInt(0);
 
             // Only spot lights need a light-space matrix, pooint lights compute their shadow depth in the shader from position + range instead
             Matrix4f lsMat = (boundShadow && isSpot) ? light.calcLightSpace() : new Matrix4f();
@@ -473,7 +536,6 @@ public class Renderer {
         }
 
         lightSSBO.endUpload();
-        shader.setFloat("normalShadowBias", engine.getValue("shadows.normal_bias"));
         shader.setInt("lightCount", liveCount);
     }
 
@@ -512,6 +574,7 @@ public class Renderer {
     }
 
     private void bindTexture(ShaderService.Shader shader, int textureId, int slot, boolean bindless, boolean isCookie) {
+        if (textureId == -1) return;
         if (bindless) {
             long handle = engine.getShaderService().makeBindless(textureId).getHandle();
             String name = isCookie ? "cookieTextures[" + slot + "]" : "shadowTextures[" + slot + "]";
@@ -524,10 +587,15 @@ public class Renderer {
         }
     }
 
-    public void renderObject(GameObject object) {
+    public void renderObject(ModelComponent model) {
         if (wireframeEnabled()) return;
-        if (renderQueue.contains(object) && engine.devMode) Logger.warning("Drawing " + object.getName() + " twice!");
-        this.renderQueue.add(object);
+        if (renderQueue.contains(model) && engine.isDevMode()) Logger.warning("Drawing model [" + model.getID().toString() + "] (attached to " + model.getOwner().getName() + ") twice!");
+        this.renderQueue.add(model);
+    }
+
+    public void renderObject(GameObject object) {
+        if (!object.hasComponent(ModelComponent.class)) return;
+        renderObject(object.getComponent(ModelComponent.class));
     }
 
     public void destroy() {

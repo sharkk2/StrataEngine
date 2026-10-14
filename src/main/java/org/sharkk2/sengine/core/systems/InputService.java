@@ -1,5 +1,6 @@
 package org.sharkk2.sengine.core.systems;
 
+import org.lwjgl.glfw.GLFWGamepadState;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 
@@ -11,8 +12,12 @@ public class InputService {
 
     private final boolean[] keys = new boolean[GLFW_KEY_LAST];
     private final boolean[] prevKeys = new boolean[GLFW_KEY_LAST];
-    private final boolean[] mousebtns = new boolean[GLFW_MOUSE_BUTTON_LAST];
-    private final boolean[] prevMousebtns = new boolean[GLFW_MOUSE_BUTTON_LAST];
+    private final boolean[] mousebtns = new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
+    private final boolean[] prevMousebtns = new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
+    private final boolean[] gamepadbtns = new boolean[GLFW_GAMEPAD_BUTTON_LAST + 1];
+    private final boolean[] prevGamepadbtns = new boolean[GLFW_GAMEPAD_BUTTON_LAST + 1];
+    private final float[] gamepadAxes = new float[GLFW_GAMEPAD_AXIS_LAST];
+
     private final Engine engine;
     private float mouseX, mouseY;
     private float mouseDX, mouseDY;
@@ -22,6 +27,9 @@ public class InputService {
     public enum InputType { KEYBOARD, MOUSE, JOYSTICK }
     public record InputBinding(InputType type, int code) {}
     private final Map<String, InputBinding> mappings = new HashMap<>();
+    private static boolean gamepadConnected = false;
+    private static int activeGamepad = GLFW_JOYSTICK_1;
+    private final GLFWGamepadState gamepadState = GLFWGamepadState.create();
 
     public void setMapping(String id, InputType type, int code) {
         boolean valid = switch (type) {
@@ -88,13 +96,60 @@ public class InputService {
             prevMousebtns[i] = mousebtns[i];
             mousebtns[i] = glfwGetMouseButton(engine.getWindowHandle(), i) == GLFW_PRESS;
         }
+
+        gamepadConnected = glfwJoystickIsGamepad(activeGamepad);
+        if (gamepadConnected) {
+            glfwGetGamepadState(activeGamepad, gamepadState);
+            for (int i = 0; i < GLFW_GAMEPAD_BUTTON_LAST; i++) {
+                prevGamepadbtns[i] = gamepadbtns[i];
+                gamepadbtns[i] = gamepadState.buttons(i) == GLFW_PRESS;
+            }
+            for (int i = 0; i < GLFW_GAMEPAD_AXIS_LAST; i++) {
+                gamepadAxes[i] = gamepadState.axes(i);
+            }
+        }
     }
-    public boolean isKeyDown(int key) {return keys[key];}
-    public boolean isKeyPressed(int key) {return keys[key] && !prevKeys[key];}
-    public boolean isKeyReleased(int key) {return !keys[key] && prevKeys[key];}
-    public boolean isMouseDown(int btn) {return mousebtns[btn];}
-    public boolean isMousePressed(int btn) {return mousebtns[btn] && !prevMousebtns[btn];}
-    public boolean isMouseReleased(int key) {return !mousebtns[key] && prevMousebtns[key];}
+
+    public boolean isKeyDown(int key) {
+        if (key >= keys.length || key < 0) {
+            Logger.error("Invalid key code");
+            return false;
+        }
+        return keys[key];
+    }
+
+    public boolean isKeyPressed(int key) {return isKeyDown(key) && !prevKeys[key];}
+    public boolean isKeyReleased(int key) {return !isKeyDown(key) && prevKeys[key];}
+    public boolean isMouseBtnDown(int btn) {
+        if (btn >= mousebtns.length || btn < 0) {
+            Logger.error("Invalid mouse button code");
+            return false;
+        }
+        return mousebtns[btn];
+    }
+
+    public boolean isMouseBtnPressed(int btn) {return isMouseBtnDown(btn) && !prevMousebtns[btn];}
+    public boolean isMouseBtnReleased(int btn) {return !isMouseBtnDown(btn) && prevMousebtns[btn];}
+    public boolean isGamepadBtnDown(int btn) {
+        if (btn >= gamepadbtns.length || btn < 0) {
+            Logger.error("Invalid gamepad button code");
+            return false;
+        }
+        return gamepadbtns[btn];
+    }
+
+    public boolean isGamepadBtnPressed(int btn) {return isGamepadBtnDown(btn) && !prevGamepadbtns[btn];}
+    public boolean isGamepadBtnReleased(int btn) {return !isGamepadBtnDown(btn) && prevGamepadbtns[btn];}
+
+    public boolean isGamepadConnected() {return gamepadConnected;}
+    public float getGamepadAxis(int axis) {return gamepadAxes[axis];}
+    public float getLeftStickX() {return gamepadAxes[GLFW_GAMEPAD_AXIS_LEFT_X];}
+    public float getLeftStickY() {return gamepadAxes[GLFW_GAMEPAD_AXIS_LEFT_Y];}
+    public float getRightStickX() {return gamepadAxes[GLFW_GAMEPAD_AXIS_RIGHT_X];}
+    public float getRightStickY() {return gamepadAxes[GLFW_GAMEPAD_AXIS_RIGHT_Y];}
+    public float getLeftTrigger() {return gamepadAxes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER];}
+    public float getRightTrigger() {return gamepadAxes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER];}
+
     public float getMouseX() { return mouseX; }
     public float getMouseY() { return mouseY; }
     public float getMouseDX() { return mouseDX; }

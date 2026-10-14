@@ -1,17 +1,18 @@
 package org.sharkk2.sengine.core.systems;
 
-import org.luaj.vm2.LuaError;
 import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
-import org.sharkk2.sengine.core.classes.LuaScript;
+import org.sharkk2.sengine.core.systems.lua.LuaScript;
 import org.sharkk2.sengine.core.classes.animation.Animation;
 import org.sharkk2.sengine.core.classes.animation.Joint;
 import org.sharkk2.sengine.core.classes.animation.JointTransform;
 import org.sharkk2.sengine.core.classes.animation.Keyframe;
 import org.sharkk2.sengine.core.classes.exceptions.AssetNotFoundException;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
+import org.sharkk2.sengine.core.systems.components.ModelComponent.Material.MaterialTexture;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.assimp.*;
@@ -54,6 +55,8 @@ public class AssetLoader {
     public static final int TEXTURE_FLIPPED = 1;
     public static final int TEXTURE_BLENDED = 1 << 1;
     public static final int TEXTURE_REPEATED = 1 << 2;
+    public static final int TEXTURE_NO_MIPMAP = 1 << 3;
+    public static final int TEXTURE_NO_ANISOTROPY = 1 << 4;
     public static final int TEXTURE_NONE = 0;
 
     public record AudioData(byte[] pcmData, int channels, int bitsPerSample, int sampleRate, boolean bigEndian) {}
@@ -80,6 +83,8 @@ public class AssetLoader {
         List<CachedMesh> meshes = new ArrayList<>();
         List<CachedNode> children = new ArrayList<>();
     }
+
+    public Set<String> getLoadedModels() {return modelCache.keySet();}
 
 
     public void loadModel(String path, String id) {
@@ -175,7 +180,7 @@ public class AssetLoader {
         node.localTransform.getUnnormalizedRotation(rot);
         node.localTransform.getScale(scale);
 
-        go.transform.setPosition(pos);
+        go.transform.position(pos);
         go.transform.scale(scale);
         go.transform.rotate(rot);
         if (node.meshes.size() == 1) {
@@ -331,25 +336,29 @@ public class AssetLoader {
         if (matIndex >= 0 && aiScene.mMaterials() != null) {
             AIMaterial aiMaterial = AIMaterial.create(aiScene.mMaterials().get(matIndex));
 
-            mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_BASE_COLOR, aiScene, directory, id);
-            if (mesh.material.albedoTex == -1) mesh.material.albedoTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE, aiScene, directory, id);
+            ModelComponent.Material mat = mesh.material;
 
-            mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_NORMALS, aiScene, directory, id);
-            if (mesh.material.normalTex == -1) mesh.material.normalTex = loadMaterialTexture(aiMaterial, aiTextureType_HEIGHT, aiScene, directory, id); // map_Bump fallback
-            mesh.material.roughnessTex = loadMaterialTexture(aiMaterial, aiTextureType_DIFFUSE_ROUGHNESS, aiScene, directory, id);
-            mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_METALNESS, aiScene, directory, id);
-            if (mesh.material.metalnessTex == -1) mesh.material.metalnessTex = loadMaterialTexture(aiMaterial, aiTextureType_SPECULAR, aiScene, directory, id);
-            mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT_OCCLUSION, aiScene, directory, id);
-            if (mesh.material.aoTex == -1) {
-                mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_LIGHTMAP, aiScene, directory, id);
-                if (mesh.material.aoTex == -1) {
-                    mesh.material.aoTex = loadMaterialTexture(aiMaterial, aiTextureType_AMBIENT, aiScene, directory, id);
-                }
-            }
+            mat.setTexture(MaterialTexture.ALBEDO, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE));
 
+            mat.setTexture(MaterialTexture.NORMAL, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_NORMALS, aiTextureType_HEIGHT)); // map_Bump fallback
 
-            mesh.material.emissiveTex = loadMaterialTexture(aiMaterial, aiTextureType_EMISSIVE, aiScene, directory, id);
-            mesh.material.opacityTex = loadMaterialTexture(aiMaterial, aiTextureType_OPACITY, aiScene, directory, id);
+            mat.setTexture(MaterialTexture.ROUGHNESS, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_DIFFUSE_ROUGHNESS));
+
+            mat.setTexture(MaterialTexture.METALNESS, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_METALNESS, aiTextureType_SPECULAR));
+
+            mat.setTexture(MaterialTexture.AO, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_AMBIENT_OCCLUSION, aiTextureType_LIGHTMAP, aiTextureType_AMBIENT));
+
+            mat.setTexture(MaterialTexture.EMISSIVE, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_EMISSIVE));
+
+            mat.setTexture(MaterialTexture.OPACITY, loadFirstTexture(aiMaterial, aiScene, directory, id,
+                    aiTextureType_OPACITY));
+
 
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 AIColor4D color = AIColor4D.malloc(stack);
@@ -385,14 +394,22 @@ public class AssetLoader {
                 }
 
                 alphaModeStr.free();
-                if (mesh.material.alphaCutout && mesh.material.opacityTex != -1) {
-                    mesh.material.alphaMaskTex = mesh.material.opacityTex;
-                    mesh.material.opacityTex = -1;
+                if (mat.alphaCutout && mat.getOpacityTexture() != -1) {
+                    mat.setAlphaMaskTexture(mat.getOpacityTexture());
+                    mesh.material.setOpacityTexture(-1);
                 }
             }
         }
 
         return mesh;
+    }
+
+    private int loadFirstTexture(AIMaterial aiMaterial, AIScene aiScene, String directory, String id, int... types) {
+        for (int type : types) {
+            int tex = loadMaterialTexture(aiMaterial, type, aiScene, directory, id);
+            if (tex != -1) return tex;
+        }
+        return -1;
     }
 
     private int loadMaterialTexture(AIMaterial material, int texType, AIScene aiScene, String directory, String modelid) {
@@ -417,7 +434,11 @@ public class AssetLoader {
             int[] w = new int[1], h = new int[1];
             ByteBuffer pixels = extractEmbeddedPixels(aiScene, texIndex, w, h);
             if (pixels != null) {
-                int glId = engine.getThreadService().runMainThreadBlocking(() -> uploadPixels(pixels, w[0], h[0], TEXTURE_BLENDED | TEXTURE_REPEATED | TEXTURE_FLIPPED));
+                int glId = engine.getThreadService().runMainThreadBlocking(() -> {
+                    int gid = uploadPixels(pixels, w[0], h[0], TEXTURE_BLENDED | TEXTURE_REPEATED | TEXTURE_FLIPPED);
+                    stbi_image_free(pixels);
+                    return gid;
+                });
                 textureCache.put(cacheKey, glId);
                 return glId;
             }
@@ -541,6 +562,8 @@ public class AssetLoader {
     private int uploadPixels(ByteBuffer data, int width, int height, int flags) {
         boolean blended = (flags & TEXTURE_BLENDED) != 0;
         boolean repeated = (flags & TEXTURE_REPEATED) != 0;
+        boolean noMipmap = (flags & TEXTURE_NO_MIPMAP) != 0;
+        boolean noAniso = (flags & TEXTURE_NO_ANISOTROPY) != 0;
 
         int id = glGenTextures();
         glBindTexture(GL_TEXTURE_2D, id);
@@ -552,11 +575,20 @@ public class AssetLoader {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
 
         if (blended) {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            int minFilter = noMipmap ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         } else {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+            int minFilter = noMipmap ? GL_NEAREST : GL_NEAREST_MIPMAP_NEAREST;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        }
+
+        if (!noAniso && !noMipmap && blended) {
+            float ratio = (int) engine.getValue("anisotropic_filtering");
+            float maxAniso = glGetFloat(EXTTextureFilterAnisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+            float aniso = Math.clamp(ratio, 1.0f, maxAniso);
+            glTexParameterf(GL_TEXTURE_2D, EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, aniso);
         }
 
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -797,33 +829,28 @@ public class AssetLoader {
 
     public LuaScript loadLuaScript(String path, String name, boolean nocache) {
         if (luaCache.containsKey(name) && !nocache) return luaCache.get(name);
-        Path p = Path.of(path);
-        if (!p.getFileName().toString().endsWith(".lua")) {
+        if (!path.endsWith(".lua")) {
             Logger.error("Invalid Lua file: " + path);
             return null;
         }
 
-        try {
-            String source = Files.readString(Path.of(path));
-            if (!Helpers.validateLua(source)) {
-                Logger.error("Failed to load Lua script (" + path + "): failed to compile");
-                return null;
-            }
-            LuaScript script = new LuaScript(source, name, path);
-            if (!nocache) luaCache.put(name, script);
-            return script;
-        }
-        catch (IOException | LuaError e) {
-            Logger.error("Failed to load Lua script (" + path + "): " + e.getMessage());
+        String source = Helpers.readFile(path, false);
+        if (source == null) return null;
+
+        if (!Helpers.validateLua(source)) {
+            Logger.error("Failed to load Lua script (" + path + "): failed to compile");
             return null;
         }
+
+        Path realPath = Helpers.resolveClasspathFile(path);
+        LuaScript script = new LuaScript(source, name, realPath != null ? realPath.toString():path);
+        if (!nocache) luaCache.put(name, script);
+        return script;
     }
 
-    public LuaScript loadLuaScript(String path, String name) {
+    public LuaScript loadLuaScript(String name, String path) {
         return loadLuaScript(path, name, false);
     }
-
-
 
 
     public class Primitives {
@@ -1357,7 +1384,7 @@ public class AssetLoader {
                 float sinPhi = (float) Math.sin(phi);
                 float cosPhi = (float) Math.cos(phi);
                 float ringY = halfBody + radius * cosPhi;
-                float v = (float) stack / (stacks * 2 + 1); // normalised over full height
+                float v = (float) stack / (stacks * 2 + 1); // normalized over full height
 
                 for (int slice = 0; slice <= slices; slice++) {
                     float theta = (float) (2 * Math.PI * slice / slices);

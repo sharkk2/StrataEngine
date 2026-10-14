@@ -20,9 +20,8 @@ public class AnimationComponent extends Component {
     private Animation currentAnimation;
     private float time;
     private boolean playing;
-    private boolean looping = true;
+    public boolean looping = true;
     public float animationSpeed = 1f;
-    private boolean started = false;
 
 
     public AnimationComponent(List<Animation> animations) {
@@ -39,7 +38,6 @@ public class AnimationComponent extends Component {
 
     public void play(String name, boolean loop) {
         Animation anim = animationsByName.get(name);
-        started = true;
         if (anim == null) return;
         if (anim == currentAnimation) return; // already playing this clip, don't restart it
         currentAnimation = anim;
@@ -54,7 +52,6 @@ public class AnimationComponent extends Component {
     }
 
     public void resume() {
-        if (!started) return;
         playing = true;
     }
 
@@ -87,7 +84,6 @@ public class AnimationComponent extends Component {
             else {
                 time = currentAnimation.duration;
                 playing = false;
-                started = false;
             }
         }
 
@@ -133,6 +129,19 @@ public class AnimationComponent extends Component {
 
         for (Joint child : joint.children) applyPose(child, pose, globalTransform);
     }
+
+    public float getTime() {return time;}
+
+    // seek is such a funny word seek seek seeeek seeeeeeeeekkuh
+    /** `timeframe` is clamped between 0 and the current animation's duration*/
+    public void seek(float timeframe) {
+        timeframe = Math.clamp(timeframe, 0f, currentAnimation.duration);
+        time = timeframe;
+        List<JointTransform> pose = sampleKeyframes(currentAnimation, timeframe);
+        applyPose(currentAnimation.rootJoint, pose, new Matrix4f());
+    }
+
+    public boolean isPlaying() {return playing;}
 
     @Override
     public AnimationComponent copy() {

@@ -2,7 +2,6 @@ package org.sharkk2.sengine;
 
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLDebugMessageCallback;
-import org.sharkk2.sengine.core.classes.ShadowMap;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.*;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
@@ -25,9 +24,10 @@ public class Engine {
     protected void onDestroy() {}
 
     public boolean initialized = false;
-    public final boolean devMode = true;
+    public boolean running = false;
+    private boolean devMode;
 
-    public final String version = "3.1.0";
+    public final String version = "3.2.0";
     private long windowHandle;
     private int windowWidth, windowHeight;
     private long monitor;
@@ -45,7 +45,6 @@ public class Engine {
     private Debugger debugger;
     private ShaderService shaderService;
     private RaycastService raycastService;
-    private CameraService cameraService;
     private AssetLoader assetLoader;
     private Renderer renderer;
     private SceneManager sceneManager;
@@ -54,6 +53,8 @@ public class Engine {
     private AudioService audioService;
     private CollisionService collisionService;
     private ThreadService threadService;
+
+    private ComponentRegistry componentRegistry;
 
     public float getWindowAspectRatio() {return (float) windowWidth / windowHeight;}
     public int getWindowWidth() {return windowWidth;}
@@ -67,17 +68,19 @@ public class Engine {
         ioConfig.put(key, value);
         if (key.equals("vsync")) {glfwSwapInterval(value?1:0);}
     }
+    /**Returns frame time in seconds*/
     public float getDeltaTime() {return deltaTime;}
     public int getFps() {return fps;}
     public void setWindowTitle(String title) {glfwSetWindowTitle(windowHandle, title);}
     public String getWindowTitle() {return glfwGetWindowTitle(windowHandle);}
     public int getTotalFrameCount() {return totalFrameCount;}
-
+    public Imgui getEngineImGui() {return devMode ? sengineImGui:null;}
+    /**returns current time in milliseconds*/
+    public long getCurrentTime() {return System.currentTimeMillis();}
     public InputService getInputService() {return inputService;}
     public ShaderService getShaderService() {return shaderService;}
     public AssetLoader getAssetLoader() {return assetLoader;}
     public Renderer getRenderer() {return renderer;}
-    public CameraService getCameraService() {return cameraService;}
     public SceneManager getSceneManager() {return sceneManager;}
     public ScriptService getScriptService() {return scriptService;}
     public Debugger getDebugger() {return debugger;}
@@ -85,11 +88,15 @@ public class Engine {
     public AudioService getAudioService() {return audioService;}
     public CollisionService getCollisionService() {return collisionService;}
     public ThreadService getThreadService() {return threadService;}
+    public ComponentRegistry getComponentRegistry() {return componentRegistry;}
+
     public void setResolution(int width, int height) {
         valueConfig.put("res_width", (float)Math.max(width, 100));
         valueConfig.put("res_height", (float)Math.max(height, 100));
         renderer.resize();
     }
+
+    public boolean isDevMode() {return devMode;}
 
     public Engine() {
         ioConfig.put("debug", true);
@@ -97,7 +104,8 @@ public class Engine {
         ioConfig.put("ssao", true);
         ioConfig.put("bloom", true);
         ioConfig.put("shadows", true);
-        ioConfig.put("frustum_culling", false);
+        ioConfig.put("instancing", true);
+        ioConfig.put("frustum_culling", true);
         ioConfig.put("mouse_visible", false);
 
         ioConfig.put("imgui.debug_overlay", true);
@@ -113,26 +121,19 @@ public class Engine {
 
         ioConfig.put("light_shafts", true);
 
-        valueConfig.put("controls.gravity", 0.098f);
-        valueConfig.put("controls.jump_force", 7f);
-        valueConfig.put("controls.bob_frequency", 1.75f);
-        valueConfig.put("controls.bob_amplitude", 0.1f);
-        valueConfig.put("controls.mouse_sensitivity", 0.1f);
-        valueConfig.put("controls.acceleration", 3.5f);
-        valueConfig.put("controls.friction", 0.85f);
-        valueConfig.put("controls.max_speed", 7f);
 
         valueConfig.put("exposure", 1.3f);
+
+        valueConfig.put("anisotropic_filtering", 16f);
         valueConfig.put("saturation", 1.6f);
         valueConfig.put("gamma", 2.2f);
         valueConfig.put("shadows.quality", (float) LightComponent.ShadowQuality.MEDIUM.ordinal()); // 0: HD, 1: 2K, 2: 4K
-        valueConfig.put("shadows.distance", 26f);
-        valueConfig.put("shadows.normal_bias", 0.02f);
+        valueConfig.put("shadows.distance", 36f);
         valueConfig.put("ssao_samples", 20f);
         valueConfig.put("bloom_strength", 0.04f);
         valueConfig.put("bloom_spread", 0.009f);
         valueConfig.put("bloom_threshold", 1.0f);
-        valueConfig.put("audio.doppler_intensity", 0.5f);
+        valueConfig.put("audio.doppler_intensity", 0.15f);
         valueConfig.put("godray_exposure", 0.01f);
         valueConfig.put("godray_decay", 0.85f);
         valueConfig.put("godray_density", 0.75f);
@@ -144,7 +145,8 @@ public class Engine {
         valueConfig.put("lens_dirt.intensity", 10f);
     }
 
-    public void initialize(int windowWidth, int windowHeight, Long monitor) throws EngineInitException {
+    public void initialize(int windowWidth, int windowHeight, Long monitor, boolean devMode) throws EngineInitException {
+        this.devMode = devMode;
         if (initialized) {
             Logger.warning("Engine is already initialized!");
             return;
@@ -176,9 +178,7 @@ public class Engine {
             glDebugMessageCallback(new GLDebugMessageCallback() {
                 @Override
                 public void invoke(int source, int type, int id, int severity, int length, long message, long userParam) {
-                    if (id == 131218) {
-                        return;
-                    }
+                    if (id == 131218) {return;} // annoying ass shader recompile warning
 
                     String msg = GLDebugMessageCallback.getMessage(length, message);
                     Logger.info("[OpenGL DEBUG]: " + msg);
@@ -204,20 +204,22 @@ public class Engine {
 
 
         //! init order must NOT be messed up
+        componentRegistry = new ComponentRegistry(this);
         debugger = new Debugger(this);
         threadService = new ThreadService();
         shaderService = new ShaderService(this);
         assetLoader = new AssetLoader(this);
-        engineSplash = assetLoader.loadTexture("src/main/resources/textures/strataEnginePng.png", AssetLoader.TEXTURE_BLENDED);
-        debugger.render2DTextureOverlay(engineSplash);
         inputService = new InputService(this);
         raycastService = new RaycastService(this);
-        cameraService = new CameraService(this);
         renderer = new Renderer(this);
         collisionService = new CollisionService(this);
         audioService = new AudioService(this);
         sceneManager = new SceneManager(this);
         scriptService = new ScriptService(this);
+        engineSplash = assetLoader.loadTexture("assets/textures/sengine.png", AssetLoader.TEXTURE_BLENDED);
+
+        componentRegistry.scanComponents();
+
         if (devMode) {
             sengineImGui = new Imgui(this);
             sengineImGui.initialize();
@@ -230,16 +232,25 @@ public class Engine {
 
     public final void start() {
         if (!initialized) throw new EngineInitException("Engine is not initialized");
+        if (running) Logger.error("Engine is already running!");
+        running = true;
         gameLoop();
+        shutdown();
+    }
+
+    public void shutdown() {
+        running = false;
         Logger.info("Cleaning up");
         shaderService.destroyAll();
         renderer.destroy();
         sceneManager.destroy();
         onDestroy();
+        audioService.destroy();
         threadService.shutdown();
         Logger.info("Destroying window");
         glfwDestroyWindow(windowHandle);
         glfwTerminate();
+        System.exit(0);
     }
 
 
@@ -247,19 +258,23 @@ public class Engine {
         long lastSec = System.currentTimeMillis();
         int framecount = 0;
 
-        while (!glfwWindowShouldClose(windowHandle)) {
+        //todo refactor the splash thing
+        while (!glfwWindowShouldClose(windowHandle) && running) {
             long frameStart = System.nanoTime();
             deltaTime = (frameStart - lastFrame) / 1_000_000_000f;
             lastFrame = frameStart;
             glfwPollEvents();
+
             audioService.update();
+            scriptService.executeComponents();
             if (sceneManager.isSceneRunning()) {
-                showEngineSplash = true;
+                showEngineSplash = false;
                 sceneManager.getActiveScene().tick();
                 renderer.renderScene(sceneManager.getActiveScene());
             } else if (showEngineSplash) {
                 debugger.render2DTextureOverlay(engineSplash);
             }
+
             inputService.update();
             if (devMode && sengineImGui != null) {
                 sengineImGui.renderImGui();

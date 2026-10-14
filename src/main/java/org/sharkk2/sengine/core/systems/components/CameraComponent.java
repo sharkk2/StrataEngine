@@ -1,10 +1,17 @@
 package org.sharkk2.sengine.core.systems.components;
 
+import imgui.extension.imguizmo.flag.Mode;
 import org.joml.*;
+import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.Scene;
 
 import java.lang.Math;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.sharkk2.sengine.Logger.getCallerClassName;
 
 public class CameraComponent extends Component {
     private float fov = 60f;
@@ -13,6 +20,12 @@ public class CameraComponent extends Component {
 
     private float pitch = 0f;
     private float yaw = 0f;
+    private float roll = 0f;
+    public boolean depthOfField = false;
+    private float focusDistance = 15;
+    private float apertureFNumber = 1.8f;
+    private float focalLengthMillim = 50;
+    private float vignette = 0.5f;
 
     private final Vector3f up = new Vector3f(0, 1, 0);
     private final Vector3f right = new Vector3f();
@@ -21,6 +34,7 @@ public class CameraComponent extends Component {
     private final Vector3f direction = new Vector3f(0, 0, -1);
     private final Vector3f positionOffset = new Vector3f();
     private final FrustumIntersection frustumIntersection = new FrustumIntersection();
+    public final List<ModelComponent> invisibleModels = new ArrayList<>();
     private int colorGradingLUT = -1;
     private int lensDirtTexture = -1;
 
@@ -59,19 +73,46 @@ public class CameraComponent extends Component {
         out.identity().perspective((float) Math.toRadians(fov), aspectRatio, near, far);
     }
 
+    public Vector3f getEyePosition() {
+        return new Vector3f(owner.transform.getPosition()).add(positionOffset);
+    }
+
+    public void getEyePosition(Vector3f out) {
+        out.set(owner.transform.getPosition()).add(positionOffset);
+    }
+
     private void calculateDirection() {
         float radYaw = (float) Math.toRadians(yaw);
         float radPitch = (float) Math.toRadians(pitch);
-        direction.set((float) (Math.cos(radPitch) * Math.cos(radYaw)), (float) Math.sin(radPitch), (float) (Math.cos(radPitch) * Math.sin(radYaw))).normalize();
+        float radRoll = (float) Math.toRadians(roll);
+
+        direction.set(
+                (float) (Math.cos(radPitch) * Math.cos(radYaw)),
+                (float) Math.sin(radPitch),
+                (float) (Math.cos(radPitch) * Math.sin(radYaw))
+        ).normalize();
+
         right.set(direction).cross(new Vector3f(0, 1, 0)).normalize();
-        up.set(right).cross(direction).normalize();
+        Vector3f worldUp = new Vector3f(right).cross(direction).normalize();
+
+        Quaternionf rollRotation = new Quaternionf().rotationAxis(radRoll, direction);
+        rollRotation.transform(worldUp, up);
+        rollRotation.transform(right);
 
         owner.transform.applyOrientation(direction, up);
     }
 
+
     public void setDirection(float pitch, float yaw) {
         this.pitch = pitch;
         this.yaw = yaw;
+        calculateDirection();
+    }
+
+    public void setDirection(float pitch, float yaw, float roll) {
+        this.pitch = pitch;
+        this.yaw = yaw;
+        this.roll = roll;
         calculateDirection();
     }
 
@@ -90,7 +131,7 @@ public class CameraComponent extends Component {
 
         Matrix4f world = object.transform.calculateWorldMatrix();
         float wx = world.m30(), wy = world.m31(), wz = world.m32();
-        float maxScale = Math.max(object.transform.width, Math.max(object.transform.height, object.transform.depth));
+        float maxScale = Math.max(object.transform.getWidth(), Math.max(object.transform.getHeight(), object.transform.getDepth()));
         return frustumIntersection.testSphere(wx, wy, wz, radius * maxScale);
     }
 
@@ -110,9 +151,9 @@ public class CameraComponent extends Component {
     }
 
     public void lookAt(Vector3f position) {
-        float dx = position.x - owner.transform.x;
-        float dy = position.y - owner.transform.y;
-        float dz = position.z - owner.transform.z;
+        float dx = position.x - owner.transform.getX();
+        float dy = position.y - owner.transform.getY();
+        float dz = position.z - owner.transform.getZ();
         float yaw = (float) Math.toDegrees(Math.atan2(dz, dx));
         float distance = (float) Math.sqrt(dx * dx + dz * dz);
         float pitch = (float) Math.toDegrees(Math.atan2(dy, distance));
@@ -131,17 +172,30 @@ public class CameraComponent extends Component {
     public void getDirection(Vector3f out) {out.set(direction);}
     public Vector3f getUp() {return new Vector3f(up);}
     public void getUp(Vector3f out) {out.set(up);}
+    public float getRoll() {return roll;}
+
+    public void setFocusDistance(float dist) {this.focusDistance = dist;}
+    public void setFocalLength(float millimeters) {this.focalLengthMillim = millimeters;}
+    public void setApertureFNumber(float fnum) {this.apertureFNumber = fnum;}
+    public float getApertureFNumber() {return apertureFNumber;}
+    public float getFocusDistance() {return focusDistance;}
+    public float getFocalLength() {return focalLengthMillim;}
+
+    public float getVignette() {return vignette;}
+    public void setVignette(float vignette) {this.vignette = Math.clamp(vignette, 0, 1);}
+
 
     @Override
     protected void onObjectAttach() {
-        owner.getEngine().getCameraService().register(this);
         calculateDirection();
     }
 
     @Override
     protected void onObjectDetach() {
-        owner.getEngine().getCameraService().unregister(this);
-
+        Scene scene = owner.getEngine().getSceneManager().getActiveScene();
+        if (scene != null && scene.getPrimaryCamera() != null && scene.getPrimaryCamera().equals(this)) {
+           scene.setPrimaryCamera(null);
+        }
     }
 
     @Override
@@ -158,6 +212,14 @@ public class CameraComponent extends Component {
         copy.setFar(far);
         copy.setFov(fov);
         copy.setNear(near);
+        copy.setPositionOffset(positionOffset);
+        copy.setLensDirtTexture(lensDirtTexture);
+        copy.setColorGradingLUT(colorGradingLUT);
+        copy.setVignette(vignette);
+        copy.depthOfField = depthOfField;
+        copy.setApertureFNumber(apertureFNumber);
+        copy.setFocusDistance(focusDistance);
+        copy.setFocalLength(focalLengthMillim);
         return copy;
     }
 }

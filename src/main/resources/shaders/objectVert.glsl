@@ -10,15 +10,17 @@ layout(std140, binding = 0) uniform Camera {
     mat4 uProjection;
     mat4 uView;
     mat4 uInverseView;
+    vec3 cameraPos;
 };
 
 layout(std430, binding = 3) readonly buffer BoneMatrices {
-    mat4 boneMatrices[];
+    mat4 bones[];
 };
 
 
 uniform mat4 uModel;
 uniform int uSkinned;
+uniform int uBoneOffset;
 
 out vec2 vUV;
 out vec3 vWorldPos;
@@ -29,8 +31,10 @@ void main() {
     vec3 localNormal = aNormal;
 
     if (uSkinned == 1) {
-        mat4 skinMatrix = boneMatrices[aBoneIds.x] * aBoneWeights.x + boneMatrices[aBoneIds.y] * aBoneWeights.y + boneMatrices[aBoneIds.z] * aBoneWeights.z + boneMatrices[aBoneIds.w] * aBoneWeights.w;
-
+        mat4 skinMatrix = bones[uBoneOffset + int(aBoneIds.x)] * aBoneWeights.x
+          + bones[uBoneOffset + int(aBoneIds.y)] * aBoneWeights.y
+          + bones[uBoneOffset + int(aBoneIds.z)] * aBoneWeights.z
+          + bones[uBoneOffset + int(aBoneIds.w)] * aBoneWeights.w;
         localPos = skinMatrix * localPos;
         localNormal = mat3(skinMatrix) * localNormal;
     }

@@ -1,15 +1,17 @@
+-- Component script
+
 local engine = gameObject:getEngine()
 
-local enabled = ctx:readState("enabled")
-local currentIntensity = ctx:readState("currentIntensity")
-local currentFov = ctx:readState("currentFov")
-local defaultFov = ctx:readState("defaultFov")
-local dirs = ctx:readState("dirs")
-local currentOffset = ctx:readState("currentOffset")
-local defaultOffset = ctx:readState("defaultOffset")
-local flickerTimer = ctx:readState("flickerTimer")
-local flickerPulseTimer = ctx:readState("flickerPulseTimer")
-local flickerPulsesRemaining = ctx:readState("flickerPulsesRemaining")
+local enabled = ctx.data:getValue("enabled")
+local currentIntensity = ctx.data:getValue("currentIntensity")
+local currentFov = ctx.data:getValue("currentFov")
+local defaultFov = ctx.data:getValue("defaultFov")
+local dirs = ctx.data:getValue("dirs")
+local currentOffset = ctx.data:getValue("currentOffset")
+local defaultOffset = ctx.data:getValue("defaultOffset")
+local flickerTimer = ctx.data:getValue("flickerTimer")
+local flickerPulseTimer = ctx.data:getValue("flickerPulseTimer")
+local flickerPulsesRemaining = ctx.data:getValue("flickerPulsesRemaining")
 
 if enabled == nil then
     dirs = {}
@@ -30,9 +32,10 @@ if engine:getInputService():isKeyPressed(engine:getInputService():getMapping("to
     enabled = not enabled
 end
 
-local rightClickHeld = engine:getInputService():isMouseDown(engine:getInputService():getMapping("focusFlash"):code())
+local rightClickHeld = engine:getInputService():isMouseBtnDown(engine:getInputService():getMapping("focusFlash"):code())
 
-local offsetTarget = rightClickHeld and mathlib.vec3(0, 0, 0) or defaultOffset
+local coffset = cam:getPositionOffset()
+local offsetTarget = rightClickHeld and mathlib.vec3(coffset.x, coffset.y, coffset.z) or defaultOffset
 local offsetDiff = offsetTarget:sub(currentOffset)
 currentOffset = currentOffset:add(offsetDiff:scale(math.min(1.0, dt * 10.0)))
 flashlight.offset:set(currentOffset:raw());
@@ -76,17 +79,16 @@ if enabled then
     end
 end
 
-flashlight.intensity = outputIntensity
-flashlight.color = mathlib.vec3(1,1,4):raw()
+flashlight.color = mathlib.vec3(1,1,2):raw()
+flashlight.intensity = outputIntensity;
 
-
-ctx:state("enabled", enabled)
-ctx:state("currentIntensity", currentIntensity)
-ctx:state("currentFov", currentFov)
-ctx:state("defaultFov", defaultFov)
-ctx:state("dirs", dirs)
-ctx:state("currentOffset", currentOffset)
-ctx:state("defaultOffset", defaultOffset)
-ctx:state("flickerTimer", flickerTimer)
-ctx:state("flickerPulseTimer", flickerPulseTimer)
-ctx:state("flickerPulsesRemaining", flickerPulsesRemaining)
+ctx.data:setValue("enabled", enabled)
+ctx.data:setValue("currentIntensity", currentIntensity)
+ctx.data:setValue("currentFov", currentFov)
+ctx.data:setValue("defaultFov", defaultFov)
+ctx.data:setValue("dirs", dirs)
+ctx.data:setValue("currentOffset", currentOffset)
+ctx.data:setValue("defaultOffset", defaultOffset)
+ctx.data:setValue("flickerTimer", flickerTimer)
+ctx.data:setValue("flickerPulseTimer", flickerPulseTimer)
+ctx.data:setValue("flickerPulsesRemaining", flickerPulsesRemaining)

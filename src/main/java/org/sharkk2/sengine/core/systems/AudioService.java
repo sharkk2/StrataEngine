@@ -35,7 +35,8 @@ public class AudioService {
     private final Map<AudioComponent, Integer> componentSources = new HashMap<>();
     private final Map<AudioComponent, Vector3f> lastPositions = new HashMap<>();
     private final List<Integer> oneShotSources = new ArrayList<>();
-
+    private final Map<String, Integer> loopingSources = new HashMap<>();
+    private final Set<AudioComponent> startedComponents = new HashSet<>();
     public final int MAX_AUDIOSOURCES;
 
     public AudioService(Engine engine) {
@@ -82,6 +83,11 @@ public class AudioService {
             return;
         }
 
+        if (comp.audioData == null) {
+            Logger.error("Failed to register audio component: No audio data found");
+            return;
+        }
+
         int buffer = getBuffer(comp.audioData);
         int source = availableSources.poll();
 
@@ -110,6 +116,7 @@ public class AudioService {
             availableSources.push(source);
         }
         lastPositions.remove(comp);
+        startedComponents.remove(comp);
     }
 
     public void update() {
@@ -135,11 +142,16 @@ public class AudioService {
             alSource3f(source, AL_POSITION, currentPos.x, currentPos.y, currentPos.z);
             alSource3f(source, AL_VELOCITY, velocity.x, velocity.y, velocity.z);
             if (comp.type == AudioComponent.AudioType.DIRECTED_AUDIO) {
-                Vector3f forward;
-                if (comp.preferObjectDirection) {
-                    forward = comp.getOwner().transform.getDirection();
-                } else {forward = comp.direction;}
+                Vector3f forward = comp.preferObjectDirection ? comp.getOwner().transform.getDirection() : comp.direction;
                 alSource3f(source, AL_DIRECTION, forward.x, forward.y, forward.z);
+                alSourcef(source, AL_CONE_INNER_ANGLE, comp.innerConeAngle);
+                alSourcef(source, AL_CONE_OUTER_ANGLE, comp.outerConeAngle);
+                alSourcef(source, AL_CONE_OUTER_GAIN, comp.outerConeVolume);
+            } else {
+                alSource3f(source, AL_DIRECTION, 0f, 0f, 0f);
+                alSourcef(source, AL_CONE_INNER_ANGLE, 360f);
+                alSourcef(source, AL_CONE_OUTER_ANGLE, 360f);
+                alSourcef(source, AL_CONE_OUTER_GAIN, 1f);
             }
 
             alSourcef(source, AL_GAIN, comp.volume);
@@ -148,36 +160,91 @@ public class AudioService {
 
             alSourcei(source, AL_LOOPING, comp.looping ? AL_TRUE : AL_FALSE);
             int state = alGetSourcei(source, AL_SOURCE_STATE);
-            if (!comp.looping && state == AL_STOPPED && comp.playing) {
+
+            if (startedComponents.contains(comp) && !comp.looping && state == AL_STOPPED) {
+                startedComponents.remove(comp);
                 comp.playing = false;
                 continue;
             }
 
             if (comp.playing && !comp.paused) {
-                if (state != AL_PLAYING) {alSourcePlay(source);}
-            } else if (comp.paused) {
-                if (state == AL_PLAYING) {alSourcePause(source);}
-            } else {
+                if (state != AL_PLAYING) {
+                    alSourcePlay(source);
+                    startedComponents.add(comp);
+                }
+            }
+            else if (comp.paused) {if (state == AL_PLAYING) {alSourcePause(source);}}
+            else {
                 if (state == AL_PLAYING || state == AL_PAUSED) {alSourceStop(source);}
+                startedComponents.remove(comp);
             }
         }
     }
 
+    public void playAudio(AudioComponent comp) {
+        Integer source = availableSources.poll();
+        if (source == null) {
+            Logger.warning("No available audio sources for playback");
+            return;
+        }
+
+        Vector3f pos = comp.getOwner().transform.getPosition();
+        alSourcei(source, AL_BUFFER, getBuffer(comp.audioData));
+        alSourcei(source, AL_LOOPING, AL_FALSE);
+        alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
+        alSource3f(source, AL_POSITION, pos.x, pos.y, pos.z);
+        alSource3f(source, AL_VELOCITY, 0f, 0f, 0f);
+        alSourcef(source, AL_GAIN, comp.volume);
+        alSourcef(source, AL_PITCH, comp.pitch);
+        alSourcef(source, AL_ROLLOFF_FACTOR, comp.fadeRate);
+        alSourcef(source, AL_REFERENCE_DISTANCE, comp.minDistance);
+        alSourcef(source, AL_MAX_DISTANCE, comp.maxDistance);
+        if (comp.type == AudioComponent.AudioType.DIRECTED_AUDIO) {
+            Vector3f forward = comp.preferObjectDirection ? comp.getOwner().transform.getDirection() : comp.direction;
+            alSource3f(source, AL_DIRECTION, forward.x, forward.y, forward.z);
+            alSourcef(source, AL_CONE_INNER_ANGLE, comp.innerConeAngle);
+            alSourcef(source, AL_CONE_OUTER_ANGLE, comp.outerConeAngle);
+            alSourcef(source, AL_CONE_OUTER_GAIN, comp.outerConeVolume);
+        } else {
+            alSource3f(source, AL_DIRECTION, 0f, 0f, 0f);
+            alSourcef(source, AL_CONE_INNER_ANGLE, 360f);
+            alSourcef(source, AL_CONE_OUTER_ANGLE, 360f);
+            alSourcef(source, AL_CONE_OUTER_GAIN, 1f);
+        }
+
+        alSourcePlay(source);
+        oneShotSources.add(source);
+    }
+
     public void playAudio(AssetLoader.AudioData data) {
-        playAudio(data, 1.0f, 1.0f);
+        playAudio(data, 1.0f, 1.0f, false, null);
     }
 
     public void playAudio(AssetLoader.AudioData data, float volume, float pitch) {
+        playAudio(data, volume, pitch, false, null);
+    }
+
+    public void playAudio(AssetLoader.AudioData data, float volume, float pitch, boolean looping, String name) {
+        if (looping && name == null) {
+            Logger.error("Looping audio requires a name to be stoppable");
+            return;
+        }
+
+        if (looping && loopingSources.containsKey(name)) {
+            Logger.warning("Looping audio with name '" + name + "' is already playing");
+            return;
+        }
+
         Integer source = availableSources.poll();
         if (source == null) {
-            Logger.warning("No available audio sources for one-shot playback");
+            Logger.warning("No available audio sources for playback");
             return;
         }
 
         int buffer = getBuffer(data);
 
         alSourcei(source, AL_BUFFER, buffer);
-        alSourcei(source, AL_LOOPING, AL_FALSE);
+        alSourcei(source, AL_LOOPING, looping ? AL_TRUE : AL_FALSE);
         alSourcei(source, AL_SOURCE_RELATIVE, AL_TRUE);
         alSource3f(source, AL_POSITION, 0, 0, 0);
         alSource3f(source, AL_VELOCITY, 0, 0, 0);
@@ -185,7 +252,25 @@ public class AudioService {
         alSourcef(source, AL_PITCH, pitch);
 
         alSourcePlay(source);
-        oneShotSources.add(source);
+
+        if (looping) {
+            loopingSources.put(name, source);
+        } else {
+            oneShotSources.add(source);
+        }
+    }
+
+    public void stopAudio(String name) {
+        Integer source = loopingSources.remove(name);
+        if (source == null) {
+            Logger.warning("No looping audio found with name '" + name + "'");
+            return;
+        }
+
+        alSourceStop(source);
+        alSourcei(source, AL_BUFFER, 0);
+        alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
+        availableSources.push(source);
     }
 
     private Vector3f computeVelocity(AudioComponent comp, Vector3f currentPos) {
@@ -200,6 +285,7 @@ public class AudioService {
     }
 
     private int getBuffer(AssetLoader.AudioData data) {
+
         Integer cached = audioBuffers.get(data);
         if (cached != null) return cached;
 
@@ -238,5 +324,39 @@ public class AudioService {
         throw new AudioException("Unsupported audio format: " + channels + " channels, " + bitsPerSample + " bits");
     }
 
+    public void destroy() {
+        for (Integer source : loopingSources.values()) {
+            alSourceStop(source);
+            alSourcei(source, AL_BUFFER, 0);
+        }
+        loopingSources.clear();
 
+        for (Integer source : oneShotSources) {
+            alSourceStop(source);
+            alSourcei(source, AL_BUFFER, 0);
+        }
+        oneShotSources.clear();
+
+        for (Integer source : componentSources.values()) {
+            alSourceStop(source);
+            alSourcei(source, AL_BUFFER, 0);
+        }
+        componentSources.clear();
+        lastPositions.clear();
+
+        for (Integer source : availableSources) {
+            alDeleteSources(source);
+        }
+        availableSources.clear();
+
+        for (Integer buffer : audioBuffers.values()) {
+            alDeleteBuffers(buffer);
+        }
+        audioBuffers.clear();
+        startedComponents.clear();
+
+        alcMakeContextCurrent(NULL);
+        alcDestroyContext(context);
+        alcCloseDevice(device);
+    }
 }

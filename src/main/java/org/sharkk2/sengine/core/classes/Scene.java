@@ -4,10 +4,14 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
-import org.sharkk2.sengine.core.systems.ScriptService;
+import org.sharkk2.sengine.core.classes.exceptions.ValueException;
+import org.sharkk2.sengine.core.systems.components.CameraComponent;
+import org.sharkk2.sengine.core.systems.components.GenericControllerComponent;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 import org.sharkk2.sengine.core.systems.ShaderService;
+import org.sharkk2.sengine.core.systems.lua.LuaInstance;
+import org.sharkk2.sengine.core.systems.lua.LuaScript;
 
 import java.util.*;
 
@@ -16,21 +20,27 @@ public abstract class Scene {
     private final Map<String, List<GameObject>> nameIndex = new HashMap<>();
     public final UUID id = UUID.randomUUID();
     public final Engine engine;
-    private final ScriptService scriptService;
     protected final String name;
     protected boolean loaded = false;
-    public Lights lights = new Lights();
     public Environment environment = new Environment();
     public List<Vector3f> spawnPoints = new ArrayList<>();
     public long sceneLoadTimeMillis;
-    private ArrayDeque<GameObject> toAddQueue = new ArrayDeque<>();
-    private ArrayDeque<UUID> toRemoveQueue = new ArrayDeque<>();
+    private final ArrayDeque<GameObject> toAddQueue = new ArrayDeque<>();
+    private final ArrayDeque<UUID> toRemoveQueue = new ArrayDeque<>();
+    private final Map<String, List<GameObject>> tags = new HashMap<>();
+    private final Map<String, LuaInstance> scripts = new HashMap<>();
+    public final DataDrawer values = new DataDrawer();
+
+    private CameraComponent primaryCamera;
+    public boolean frozen = false;
 
 
 
     public static class Environment {
         public Fog fog = new Fog();
         public Sky sky = new Sky();
+        public GlobalSceneLight globalLight = new GlobalSceneLight();
+
     }
 
     public static class Fog {
@@ -97,24 +107,7 @@ public abstract class Scene {
         }
     }
 
-    public static class Lights {
-        public GlobalSceneLight globalLight = new GlobalSceneLight();
-        private final List<LightComponent> lights = new ArrayList<>();
-        public void getLights(List<LightComponent> out) {out.clear(); out.addAll(lights);}
-        public LightComponent createLight(LightComponent.LightType type) {
-            LightComponent light = new LightComponent(type);
-            lights.add(light);
-            return light;
-        }
 
-        public void registerLight(LightComponent light) {
-            if (lights.contains(light)) {Logger.warning("Light (" + light.getID() + ") is already registered in the scene"); return;}
-            lights.add(light);
-        }
-
-        public void removeLight(LightComponent light) {lights.remove(light);}
-        public int lightCount() {return lights.size();}
-    }
 
     public static class GlobalSceneLight {
         public Vector3f direction = new Vector3f(-0.15f, -1.0f, 0.1f).normalize();
@@ -124,6 +117,8 @@ public abstract class Scene {
 
         public boolean castShadow = true;
         public ShadowMap shadowMap = new ShadowMap(LightComponent.ShadowQuality.HIGH);
+        public float shadowNormalBias = 0.055f;
+
         private final Matrix4f lightView = new Matrix4f();
         private final Matrix4f lightProj = new Matrix4f();
         private final Vector3f up = new Vector3f(0,1,0);
@@ -134,7 +129,7 @@ public abstract class Scene {
         public Matrix4f calcLightSpace(Engine engine) {
             float size = engine.getValue("shadows.distance");
             lightProj.identity().ortho(-size, size, -size, size, 1f, 300f);
-            target.set(engine.getCameraService().getPrimaryCamera().getOwner().transform.getPosition());
+            target.set(engine.getSceneManager().getActiveScene().getPrimaryCamera().getOwner().transform.getPosition());
             float texelSize = (size * 2f) / shadowMap.size;
             target.x = (float)(Math.floor(target.x / texelSize) * texelSize);
             target.z = (float)(Math.floor(target.z / texelSize) * texelSize);
@@ -150,7 +145,6 @@ public abstract class Scene {
 
     public Scene(Engine engine, String sceneName) {
         this.engine = engine;
-        this.scriptService = engine.getScriptService();
         this.name = sceneName;
     }
 
@@ -164,6 +158,17 @@ public abstract class Scene {
             return;
         }
         onLoad();
+        if (engine.isDevMode()) {
+            GameObject devObject = new GameObject(engine);
+            devObject.attachComponent(new CameraComponent());
+            devObject.attachComponent(new GenericControllerComponent());
+            devObject.setName("###DEV_OBJECT###");
+            devObject.isDebuggingObject = true;
+            addObject(devObject);
+            setPrimaryCamera(devObject.getComponent(CameraComponent.class));
+        }
+
+
         sceneLoadTimeMillis = System.currentTimeMillis();
         loaded = true;
     }
@@ -172,6 +177,7 @@ public abstract class Scene {
 
 
     public final void tick() {
+        if (!loaded || frozen) return;
         while (!toAddQueue.isEmpty()){
             GameObject qo = toAddQueue.pop();
             GameObject previous = objects.put(qo.id, qo);
@@ -185,9 +191,9 @@ public abstract class Scene {
             if (removed != null) unindexName(removed);
         }
 
-        for (GameObject object : objects.values()) {
-            object.update();
-            scriptService.executeScript(object);
+        for (GameObject object : objects.values()) {object.update();}
+        for (LuaInstance ls : scripts.values()) {
+            engine.getScriptService().execute(ls);
         }
         onTick();
     }
@@ -195,13 +201,14 @@ public abstract class Scene {
 
 
     public final void destroy() {
-        for (GameObject object : objects.values()) object.destroy();
-        objects.clear();
-        nameIndex.clear();
-        lights.globalLight.shadowMap.cleanup();
-        lights.lights.clear();
         loaded = false;
         onDestroy();
+        for (GameObject object : objects.values()) {object.destroy();}
+        objects.clear();
+        nameIndex.clear();
+        environment.globalLight.shadowMap.cleanup();
+        scripts.clear();
+        values.destroy();
     }
 
     public void addObject(GameObject object) {
@@ -256,6 +263,14 @@ public abstract class Scene {
         for (UUID uuid : ids) {removeObject(uuid);}
     }
 
+    public boolean containsObject(UUID id) {
+        return objects.containsKey(id);
+    }
+
+    public boolean containsObject(GameObject object) {
+        return object != null && objects.containsKey(object.id);
+    }
+
     public List<GameObject> getObjects() {return new ArrayList<>(objects.values());}
 
     public List<GameObject> getAllObjects() {
@@ -279,6 +294,8 @@ public abstract class Scene {
             collectModelComponents(obj, out);
         }
     }
+
+
 
     private void collectModelComponents(GameObject current, List<ModelComponent> out) {
         ModelComponent mc = current.getComponent(ModelComponent.class);
@@ -318,5 +335,41 @@ public abstract class Scene {
     public Engine getEngine() {return engine;}
     public String getName() {return name;}
     public boolean isLoaded() {return loaded;}
+
+    public void setPrimaryCamera(CameraComponent cc) {
+        primaryCamera = cc;
+    }
+    public CameraComponent getPrimaryCamera() {return primaryCamera;}
+
+    public void tagObject(GameObject object, String tag) {
+        if (!containsObject(object.getRoot().id)) {
+            Logger.warning("Object (" + object.getName() + ") was not found");
+        }
+        tags.computeIfAbsent(tag, k -> new ArrayList<>()).add(object);
+    }
+
+    public void untagObject(GameObject object, String tag) {
+        tags.computeIfPresent(tag, (k, list) -> {
+            list.remove(object);
+            return list.isEmpty() ? null : list;
+        });
+    }
+
+    public Set<String> getTags() {return tags.keySet();}
+    public List<GameObject> getTagged(String tag) {return tags.get(tag);}
+    public boolean isTagged(GameObject object, String tag) {
+        if (!tags.containsKey(tag)) return false;
+        return tags.get(tag).contains(object);
+    }
+
+    public void addScript(String name, LuaInstance script) {
+        script.passObject(this, "scene");
+        script.passObject(engine, "engine");
+        scripts.put(name, script);
+    }
+    public void removeScript(String name) {scripts.remove(name);}
+    public Set<String> getScripts() {return scripts.keySet();}
+    public LuaInstance getScript(String name) {return scripts.get(name);}
+
 
 }

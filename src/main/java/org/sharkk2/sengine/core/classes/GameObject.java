@@ -1,12 +1,11 @@
 package org.sharkk2.sengine.core.classes;
 
-import org.joml.Matrix4f;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
+import org.joml.*;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
-import org.sharkk2.sengine.core.systems.renderer.Renderer;
+import org.sharkk2.sengine.core.classes.exceptions.ValueException;
 
+import java.lang.Math;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -17,9 +16,9 @@ public class GameObject {
     private String name = "GameObject";
     public Transform transform = new Transform();
     public GameObject parent;
-    public Renderer.RenderMethod renderMethod = Renderer.RenderMethod.RENDER_DEFERRED;
     public List<GameObject> children = new ArrayList<>();
     public boolean isDebuggingObject = false;
+
 
     public GameObject(Engine engine) {
         this.engine = engine;
@@ -27,26 +26,28 @@ public class GameObject {
 
     public void addChild(GameObject child) {
         child.parent = this;
-        child.renderMethod = renderMethod;
-
         children.add(child);
 
     }
 
+    public GameObject getParent() {
+        if (parent == null) return this;
+        return parent;
+    }
+
+
+    /**orphan re-adds the child as a root object in the scene, if false it kills the child*/
     public void removeChild(GameObject child, boolean orphan) {
         if (!children.contains(child)) Logger.error("GameObject " + child.getName() + " is not a direct-child of " + name);
+        child.parent = null;
         children.remove(child);
-        if (engine.getSceneManager().isSceneRunning() && !orphan) {
+        if (engine.getSceneManager().isSceneRunning() && orphan) {
             engine.getSceneManager().getActiveScene().addObject(child);
         }
     }
 
     public void removeChild(GameObject child) {
-        if (!children.contains(child)) Logger.error("GameObject " + child.getName() + " is not a direct-child of " + name);
-        children.remove(child);
-        if (engine.getSceneManager().isSceneRunning()) {
-            engine.getSceneManager().getActiveScene().addObject(child);
-        }
+        removeChild(child, false);
     }
 
     public void update() {
@@ -62,25 +63,39 @@ public class GameObject {
     }
 
     public class Transform {
-        public float x, y, z;
-        public float pitch, yaw, roll;
-        public float width = 1, height = 1, depth = 1;
+        private float x, y, z;
+        private float pitch, yaw, roll;
+        private float width = 1, height = 1, depth = 1;
         private final Quaternionf rotation = new Quaternionf();
-
+        public enum TransformEvent {ROTATION_CHANGE, POSITION_CHANGE, SCALE_CHANGE};
+        private List<Consumer<TransformEvent[]>> listeners = new ArrayList<>();
         private boolean dirty = true;
         private long worldVersion = 0;
         private GameObject lastParent = null;
         private long lastParentVersion = -1;
         private final Matrix4f cachedWorldMatrix = new Matrix4f();
 
+        public void attachListener(Consumer<TransformEvent[]> listener) {this.listeners.add(listener);}
+        public void detachListener(Consumer<TransformEvent[]> listener) {this.listeners.remove(listener);}
+
+        public float getX() {return x;}
+        public float getY() {return y;}
+        public float getZ() {return z;}
+        public float getWidth() {return width;}
+        public float getHeight() {return height;}
+        public float getDepth() {return depth;}
+        public float getPitch() {return pitch;}
+        public float getYaw() {return yaw;}
+        public float getRoll() {return roll;}
+
         public void transformPos(float x, float y, float z) {
             this.x += x; this.y += y; this.z += z;
-            markDirty();
+            markDirty(TransformEvent.POSITION_CHANGE);
         }
 
         public void transformScale(float w, float h, float d) {
             this.width += w; this.height += h; this.depth += d;
-            markDirty();
+            markDirty(TransformEvent.SCALE_CHANGE);
         }
 
         public void transformRotation(float p, float y, float r) {
@@ -91,7 +106,7 @@ public class GameObject {
             );
             this.rotation.mul(delta);
             updateEulerFields();
-            markDirty();
+            markDirty(TransformEvent.ROTATION_CHANGE);
         }
 
         public Vector3f getPosition() { return new Vector3f(x, y, z); }
@@ -100,22 +115,28 @@ public class GameObject {
         public Vector3f getScale() { return new Vector3f(width, height, depth); }
         public Vector3f getScale(Vector3f dest) { return dest.set(width, height, depth); }
 
-        public Quaternionf getRotation() { return rotation; }
+        public Quaternionf getRotationQuat() { return rotation; }
+        public Vector3f getRotationEuler() {return new Vector3f(pitch, yaw, roll);}
+        public Vector4f getRotation() {return new Vector4f(rotation.x, rotation.y, rotation.z, rotation.w);}
 
-        public void setPosition(float x, float y, float z) {
+
+
+        public void position(float x, float y, float z) {
             this.x = x; this.y = y; this.z = z;
-            markDirty();
+            markDirty(TransformEvent.POSITION_CHANGE);
         }
 
-        public void setPosition(Vector3f pos) { setPosition(pos.x, pos.y, pos.z); }
+        public void position(Vector3f pos) { position(pos.x, pos.y, pos.z); }
 
         public void scale(float w, float h, float d) {
-            this.width = w; this.height = h; this.depth = d;
-            markDirty();
+            this.width = Math.max(0, w); this.height = Math.max(0, h); this.depth = Math.max(0, d);
+            markDirty(TransformEvent.SCALE_CHANGE);
         }
 
         public void scale(Vector3f scale) { scale(scale.x, scale.y, scale.z); }
-        public void scale(float v) { scale(v, v, v); }
+        public void scale(float v) {
+            scale(Math.max(0, v), Math.max(0, v), Math.max(0, v));
+        }
 
         public void rotate(float p, float y, float r) {
             this.pitch = p;
@@ -126,7 +147,7 @@ public class GameObject {
                     (float) Math.toRadians(y),
                     (float) Math.toRadians(r)
             );
-            markDirty();
+            markDirty(TransformEvent.ROTATION_CHANGE);
         }
 
         public void rotate(Vector3f rot) { rotate(rot.x, rot.y, rot.z); }
@@ -134,11 +155,11 @@ public class GameObject {
         public void rotate(Quaternionf rotation) {
             this.rotation.set(rotation);
             updateEulerFields();
-            markDirty();
+            markDirty(TransformEvent.ROTATION_CHANGE);
         }
 
-        public Vector3f getDirection() { return getRotation().transform(new Vector3f(0, 0, 1)); }
-        public Vector3f getUp() { return getRotation().transform(new Vector3f(0, 1, 0)); }
+        public Vector3f getDirection() { return getRotationQuat().transform(new Vector3f(0, 0, 1)); }
+        public Vector3f getUp() { return getRotationQuat().transform(new Vector3f(0, 1, 0)); }
 
         public void applyOrientation(Vector3f direction) { applyOrientation(direction, new Vector3f(0, 1, 0)); }
 
@@ -146,14 +167,17 @@ public class GameObject {
             Vector3f dir = new Vector3f(direction).normalize();
             Quaternionf worldRot = new Quaternionf().lookAlong(dir.negate(), up).conjugate();
             if (parent != null) {
-                Quaternionf parentInverse = new Quaternionf(parent.transform.getRotation()).invert();
+                Quaternionf parentInverse = new Quaternionf(parent.transform.getRotationQuat()).invert();
                 rotate(parentInverse.mul(worldRot, new Quaternionf()));
             } else {
                 rotate(worldRot);
             }
         }
 
-        private void markDirty() { dirty = true; }
+        private void markDirty(TransformEvent... events) {
+            dirty = true;
+            for (Consumer<TransformEvent[]> listener : listeners) {listener.accept(events);}
+        }
 
         private long getWorldVersion() {
             calculateWorldMatrix();
@@ -199,36 +223,38 @@ public class GameObject {
             }
 
             Vector3f position = new Vector3f();
+            Vector3f scale = new Vector3f();
             localMatrix.getTranslation(position);
+            localMatrix.getScale(scale);
+
             this.x = position.x;
             this.y = position.y;
             this.z = position.z;
 
-            Vector3f scale = new Vector3f();
-            localMatrix.getScale(scale);
             this.width = scale.x;
             this.height = scale.y;
             this.depth = scale.z;
 
-            Matrix4f normMatrix = new Matrix4f(localMatrix);
+            final float epsilon = 1e-6f;
+            if (scale.x > epsilon && scale.y > epsilon && scale.z > epsilon) {
+                Matrix3f rotMatrix = new Matrix3f(localMatrix);
+                rotMatrix.m00(rotMatrix.m00() / scale.x);
+                rotMatrix.m01(rotMatrix.m01() / scale.x);
+                rotMatrix.m02(rotMatrix.m02() / scale.x);
+                rotMatrix.m10(rotMatrix.m10() / scale.y);
+                rotMatrix.m11(rotMatrix.m11() / scale.y);
+                rotMatrix.m12(rotMatrix.m12() / scale.y);
+                rotMatrix.m20(rotMatrix.m20() / scale.z);
+                rotMatrix.m21(rotMatrix.m21() / scale.z);
+                rotMatrix.m22(rotMatrix.m22() / scale.z);
 
-            normMatrix.m00(normMatrix.m00() / (this.width != 0 ? this.width : 1.0f));
-            normMatrix.m01(normMatrix.m01() / (this.width != 0 ? this.width : 1.0f));
-            normMatrix.m02(normMatrix.m02() / (this.width != 0 ? this.width : 1.0f));
-
-            normMatrix.m10(normMatrix.m10() / (this.height != 0 ? this.height : 1.0f));
-            normMatrix.m11(normMatrix.m11() / (this.height != 0 ? this.height : 1.0f));
-            normMatrix.m12(normMatrix.m12() / (this.height != 0 ? this.height : 1.0f));
-
-            normMatrix.m20(normMatrix.m20() / (this.depth != 0 ? this.depth : 1.0f));
-            normMatrix.m21(normMatrix.m21() / (this.depth != 0 ? this.depth : 1.0f));
-            normMatrix.m22(normMatrix.m22() / (this.depth != 0 ? this.depth : 1.0f));
-
-            normMatrix.getUnnormalizedRotation(this.rotation);
-            this.rotation.normalize();
+                Quaternionf newRotation = new Quaternionf();
+                rotMatrix.getNormalizedRotation(newRotation);
+                this.rotation.set(newRotation);
+            }
 
             updateEulerFields();
-            markDirty();
+            markDirty(TransformEvent.POSITION_CHANGE, TransformEvent.SCALE_CHANGE, TransformEvent.ROTATION_CHANGE);
         }
 
         private void updateEulerFields() {
@@ -256,9 +282,15 @@ public class GameObject {
 
     public <T extends Component> T getComponent(Class<T> type) {return type.cast(components.get(type));}
 
+    @SuppressWarnings("unchecked")
+    public <T extends Component> T getComponent(String classname) {
+        Class<? extends Component> type = getEngine().getComponentRegistry().resolveType(classname);
+        if (type == null) throw new ValueException("Unknown component type: " + classname);
+        return (T) components.get(type);
+    }
     /**Returns component with unverified cast*/
     @SuppressWarnings("unchecked")
-    public <T extends Component> T getComponent(String name) {
+    public <T extends Component> T getComponentByName(String name) {
         for (Component c : components.values()) {
             if (c.name.equals(name)) return (T) c;
         }
@@ -266,8 +298,9 @@ public class GameObject {
     }
 
     public Collection<Component> getComponents() { return components.values(); }
+    public int getComponentCount() {return components.size();}
 
-    public void detatchComponent(Component component) {
+    public void detachComponent(Component component) {
         components.remove(component.getClass()); component.onDetach();
     }
 
@@ -282,10 +315,21 @@ public class GameObject {
         return current;
     }
 
-    public void destroy() {
+    public void destroy(boolean removeFromScene) {
         components.forEach((aClass, component) -> component.onDetach());
         components.clear();
+        cascade((obj) -> {
+            for (Component c : obj.getComponents()) {c.onDetach();}
+        });
         children.clear();
+        if (removeFromScene && engine.getSceneManager().isSceneRunning()) {
+            engine.getSceneManager().getActiveScene().removeObject(this);
+        }
+
+    }
+
+    public void destroy() {
+        destroy(false);
     }
 
     public void cascade(Consumer<GameObject> action) {
@@ -303,12 +347,11 @@ public class GameObject {
     public GameObject clone() {
         GameObject copy = new GameObject(engine);
         copy.setName(this.name + " (Copy)");
-        copy.renderMethod = this.renderMethod;
         copy.isDebuggingObject = this.isDebuggingObject;
 
-        copy.transform.setPosition(transform.getPosition());
+        copy.transform.position(transform.getPosition());
         copy.transform.scale(transform.getScale());
-        copy.transform.rotate(new Quaternionf(this.transform.getRotation()));
+        copy.transform.rotate(new Quaternionf(this.transform.getRotationQuat()));
 
         for (Component c : this.components.values()) {
             copy.attachComponent(c.copy());

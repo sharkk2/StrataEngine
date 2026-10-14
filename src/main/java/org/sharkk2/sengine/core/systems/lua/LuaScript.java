@@ -1,32 +1,34 @@
-package org.sharkk2.sengine.core.classes;
+package org.sharkk2.sengine.core.systems.lua;
 
 import org.luaj.vm2.Globals;
 import org.luaj.vm2.LuaError;
-import org.luaj.vm2.LuaValue;
+import org.luaj.vm2.Prototype;
 import org.luaj.vm2.lib.jse.CoerceJavaToLua;
 import org.luaj.vm2.lib.jse.JsePlatform;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
 import org.sharkk2.sengine.core.systems.debug.FileWatcher;
-import org.sharkk2.sengine.core.systems.lua.MathLib;
 
 import java.io.IOException;
+import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class LuaScript {
     public final String name;
-    private String source;
-    private LuaValue chunk;
     public final String path;
-    private final Globals globals;
+    private String source;
+    private volatile Prototype prototype;
+    private final AtomicInteger version = new AtomicInteger(); // atomic integers sound soo cool lol
+    private final Globals globals; // shared by every instance
     private boolean hotreloads = false;
     private final List<String> errors = new ArrayList<>();
     private final FileWatcher watcher;
-    public boolean supressErrors = false;
+    public boolean suppressErrors = false;
     public boolean checkReloads = true;
 
     public LuaScript(String source, String name, String path) {
@@ -34,46 +36,55 @@ public class LuaScript {
         this.source = source;
         this.path = path;
         this.globals = JsePlatform.standardGlobals();
-        this.chunk = globals.load(source, name);
+        this.globals.load(new MathLib());
+        this.prototype = compile(source);
         this.watcher = new FileWatcher(Path.of(path), (change) -> {
             if (change.equals(FileWatcher.MODIFY)) reload();
         });
-        globals.load(new MathLib());
     }
 
+    private Prototype compile(String src) {
+        try {
+            return globals.compilePrototype(new StringReader(src), name);
+        } catch (IOException e) {
+            throw new LuaError(e.getMessage());
+        }
+    }
+
+    public LuaInstance newInstance() {return new LuaInstance(this);}
     public void passObject(Object object, String name) {
         globals.set(name, CoerceJavaToLua.coerce(object));
     }
 
     public void reload() {
         try {
+            Logger.info("Real path: " + path);
             String nSource = Files.readString(Path.of(path));
-            if (checkReloads && !Helpers.validateLua(nSource)) {return;}
-
-            this.chunk = globals.load(nSource, name);
+            if (checkReloads && !Helpers.validateLua(nSource)) return;
+            Prototype p = compile(nSource);
             this.source = nSource;
+            this.prototype = p;
+            this.version.incrementAndGet();
         } catch (IOException | LuaError e) {
             registerError("Failed to reload Lua script (" + path + "): " + e.getMessage());
             Logger.error("Failed to reload Lua script (" + path + "): " + e.getMessage());
         }
     }
 
+    public String getLastError() {return errors.isEmpty() ? null : errors.getLast();}
 
-    public String getLastError() {return errors.getLast();}
     public List<String> getErrors() {return new ArrayList<>(errors);}
     public void registerError(String er) {
-        if (supressErrors) return;
-        if (er.equals(errors.getLast())) return;
+        if (suppressErrors) return;
+        if (!errors.isEmpty() && er.equals(errors.getLast())) return;
         errors.add(er);
     }
-    public LuaValue getChunk() {return chunk;}
+
+    public Globals getGlobals() {return globals;}
+    public Prototype getPrototype() {return prototype;}
+    public int getVersion() {return version.get();}
     public void enableHotReloads(boolean v, Engine engine) {
-        this.hotreloads = v;
-        if (hotreloads) {
-            engine.getThreadService().runTask(watcher::start);
-        } else {
-            engine.getThreadService().runTask(watcher::stop);
-        }
+        enableHotReloads(v, 3, engine);
     }
 
     public void enableHotReloads(boolean v, int checkInterval, Engine engine) {

@@ -6,15 +6,15 @@
 
     <groupId>org.sharkk2</groupId>
     <artifactId>StrataEngine</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>3.1.0-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.source>23</maven.compiler.source>
         <maven.compiler.target>23</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lwjgl.version>3.4.1</lwjgl.version>
-        <lwjgl.natives>natives-windows</lwjgl.natives>
     </properties>
+
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -24,35 +24,24 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-
         </dependencies>
     </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.hid4java</groupId>
-            <artifactId>hid4java</artifactId>
-            <version>0.7.0</version>
-        </dependency>
-        <dependency>
-            <groupId>de.fabmax</groupId>
-            <artifactId>physx-jni</artifactId>
-            <version>2.7.1</version>
-        </dependency>
-        <dependency>
-            <groupId>de.fabmax</groupId>
-            <artifactId>physx-jni</artifactId>
-            <version>2.7.1</version>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl</artifactId>
             <classifier>natives-windows</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-linux</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -62,7 +51,13 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-glfw</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-windows</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-glfw</artifactId>
+            <classifier>natives-linux</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -72,7 +67,13 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-opengl</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-windows</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-opengl</artifactId>
+            <classifier>natives-linux</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -82,7 +83,13 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-openal</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-windows</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-openal</artifactId>
+            <classifier>natives-linux</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -92,7 +99,13 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-stb</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-windows</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-stb</artifactId>
+            <classifier>natives-linux</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -102,9 +115,32 @@
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-assimp</artifactId>
-            <classifier>${lwjgl.natives}</classifier>
+            <classifier>natives-windows</classifier>
             <scope>runtime</scope>
         </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-assimp</artifactId>
+            <classifier>natives-linux</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-tinyfd</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-tinyfd</artifactId>
+            <classifier>natives-windows</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.lwjgl</groupId>
+            <artifactId>lwjgl-tinyfd</artifactId>
+            <classifier>natives-linux</classifier>
+            <scope>runtime</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.joml</groupId>
             <artifactId>joml</artifactId>
@@ -136,6 +172,35 @@
             <artifactId>luaj-jse</artifactId>
             <version>3.0.1</version>
         </dependency>
+        <dependency>
+            <groupId>io.github.classgraph</groupId>
+            <artifactId>classgraph</artifactId>
+            <version>4.8.179</version>
+        </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.sharkk2.game.Game</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -113,8 +113,8 @@ public class SSAOPass extends RenderPass {
 
     @Override
     protected void onPass(FrameContext frameContext) {
-        frameContext.set("ssao.texture", ssaoTexture);
-        frameContext.set("ssao.blurredTexture", blurTexture);
+        frameContext.data.setValue("ssao.texture", ssaoTexture);
+        frameContext.data.setValue("ssao.blurredTexture", blurTexture);
 
         if (!engine.getIO("ssao")) return;
         glViewport(0,0,(int)engine.getValue("res_width"), (int)engine.getValue("res_height"));
@@ -129,10 +129,10 @@ public class SSAOPass extends RenderPass {
         ssaoShader.setFloat("noiseScaleX", engine.getValue("res_width") / 4.0f);
         ssaoShader.setFloat("noiseScaleY", engine.getValue("res_height") / 4.0f);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, frameContext.get("gbuffer.position", Integer.class));
+        glBindTexture(GL_TEXTURE_2D, frameContext.data.getValueNumber("gbuffer.position").intValue());
         ssaoShader.setInt("gPosition", 0);
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, frameContext.get("gbuffer.normal", Integer.class));
+        glBindTexture(GL_TEXTURE_2D, frameContext.data.getValueNumber("gbuffer.normal").intValue());
         ssaoShader.setInt("gNormal", 1);
         ssaoShader.setInt("kernelSize", (int) engine.getValue("ssao_samples"));
 
@@ -152,7 +152,7 @@ public class SSAOPass extends RenderPass {
         glBindTexture(GL_TEXTURE_2D, ssaoTexture);
         ssaoBlurShader.setInt("ssaoInput", 0);
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, frameContext.get("gbuffer.position", Integer.class));
+        glBindTexture(GL_TEXTURE_2D, frameContext.data.getValueNumber("gbuffer.position").intValue());
         ssaoBlurShader.setInt("gPosition", 1);
 
         glBindVertexArray(quad.vao);

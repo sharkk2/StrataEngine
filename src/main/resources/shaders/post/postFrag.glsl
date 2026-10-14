@@ -7,6 +7,8 @@ uniform sampler2D screenTexture;
 uniform sampler2D bloomTexture;
 uniform sampler3D lutTexture;
 uniform sampler2D lensDirtTexture;
+uniform sampler2D gPosition;
+uniform vec2 screenSize;
 uniform float bloomStrength;
 
 uniform float exposure;
@@ -21,7 +23,7 @@ uniform int useLensDirt;
 uniform float time;
 uniform int AAMode;
 uniform float lensDirtIntensity;
-
+uniform float vignette;
 uniform vec2 sunScreenPos;
 uniform vec3 sunColor;
 uniform float godrayExposure;
@@ -32,7 +34,15 @@ uniform float godrayMaxBrightness;
 uniform int godraysEnabled;
 const int GODRAY_SAMPLES = 64;
 
+uniform float maxCocPixels = 4;
+uniform float focusDist = 12;
+uniform float focalLengthMillim = 50;
+uniform float fnumber = 1.8f;
+uniform int DoFEnabled;
+const float SENSOR_HEIGHT_MM = 24.0;
 
+const int SAMPLES = 32;
+const float GOLDEN_ANGLE = 2.39996323;
 
 float luminance(vec3 color) {return dot(color, vec3(0.299, 0.587, 0.114));}
 
@@ -121,6 +131,39 @@ vec3 bloomMix(vec3 clr) {
     return result;
 }
 
+float getCoc(vec2 uv) {
+    float dist = -texture(gPosition, uv).z;
+    vec2 texelSize = vec2(1/screenSize.x, 1/screenSize.y);
+    float f = focalLengthMillim * 0.001;
+    float apertureDiameter = f / fnumber;
+    float cocMeters = apertureDiameter * f * (dist - focusDist) / (dist * (focusDist - f));
+
+    float pixelsPerMeter = (1.0 / texelSize.y) / (SENSOR_HEIGHT_MM * 0.001);
+    return clamp(cocMeters * pixelsPerMeter, -maxCocPixels, maxCocPixels);
+}
+
+vec3 applyDof(vec2 uv, float centerCoc) {
+    vec2 texel = 1.0 / vec2(textureSize(screenTexture, 0));
+    float centerRadius = abs(centerCoc);
+
+    vec3 result = texture(screenTexture, uv).rgb;
+    float totalWeight = 1.0;
+
+    for (int i = 0; i < SAMPLES; i++) {
+        float r = sqrt((float(i) + 0.5) / float(SAMPLES));
+        float a = float(i) * GOLDEN_ANGLE;
+        vec2 offset = vec2(cos(a), sin(a)) * r * centerRadius * texel;
+        vec2 sampleUv = uv + offset;
+
+        float sampleCoc = getCoc(sampleUv);
+        float weight = (abs(sampleCoc) >= r * centerRadius) ? 1.0 : 0.0;
+
+        result += texture(screenTexture, sampleUv).rgb * weight;
+        totalWeight += weight;
+    }
+    return result / totalWeight;
+}
+
 void main() {
     vec3 color;
     switch (AAMode) {
@@ -138,6 +181,18 @@ void main() {
         else {
             vec3 bloomColor = texture(bloomTexture, TexCoord).rgb;
             color += bloomColor * bloomStrength;
+        }
+    }
+
+    if (DoFEnabled == 1) {
+        float coc = getCoc(TexCoord);
+        float blurT = smoothstep(0.5, 2.0, abs(coc));
+        if (blurT >= 0.0) {
+            if (blurT >= 1.0) {
+                color = applyDof(TexCoord, coc);
+            } else {
+                color = mix(color, applyDof(TexCoord, coc), blurT);
+            }
         }
     }
 
@@ -160,7 +215,8 @@ void main() {
 
 
     float dist = distance(TexCoord, vec2(0.5, 0.5));
-    float vignette = smoothstep(0.9, 0.45f, dist);
+    float vignette = smoothstep(0.9, 0.9 * vignette, dist);
 
     FragColor = vec4(color * vignette, 1.0);
 }
+

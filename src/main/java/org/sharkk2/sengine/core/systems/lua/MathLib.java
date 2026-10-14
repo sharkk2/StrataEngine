@@ -1,9 +1,6 @@
 package org.sharkk2.sengine.core.systems.lua;
 
-import org.joml.Matrix4f;
-import org.joml.Quaternionf;
-import org.joml.Vector2f;
-import org.joml.Vector3f;
+import org.joml.*;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.LuaValue;
 import org.luaj.vm2.lib.OneArgFunction;
@@ -49,6 +46,38 @@ public class MathLib extends TwoArgFunction {
                         (float) args.arg(3).checkdouble(),
                         (float) args.arg(4).checkdouble()
                 ));
+            }
+        });
+
+        mathlib.set("fromVec3", new OneArgFunction() {
+            @Override
+            public LuaValue call(LuaValue raw) {
+                Vector3f v = (Vector3f) raw.checkuserdata(Vector3f.class);
+                return new Vec3(v);
+            }
+        });
+
+        mathlib.set("fromVec2", new OneArgFunction() {
+            @Override
+            public LuaValue call(LuaValue raw) {
+                Vector2f v = (Vector2f) raw.checkuserdata(Vector2f.class);
+                return new Vec2(v);
+            }
+        });
+
+        mathlib.set("fromMat4", new OneArgFunction() {
+            @Override
+            public LuaValue call(LuaValue raw) {
+                Matrix4f v = (Matrix4f) raw.checkuserdata(Matrix4f.class);
+                return new Mat4(v);
+            }
+        });
+
+        mathlib.set("fromQuat", new OneArgFunction() {
+            @Override
+            public LuaValue call(LuaValue raw) {
+                Quaternionf v = (Quaternionf) raw.checkuserdata(Quaternionf.class);
+                return new Quat(v);
             }
         });
 

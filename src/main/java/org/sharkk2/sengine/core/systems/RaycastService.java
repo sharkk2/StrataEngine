@@ -4,11 +4,14 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.sharkk2.sengine.Engine;
+import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
 import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.Scene;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
+import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.util.List;
 
@@ -18,6 +21,7 @@ public class RaycastService {
     private final Vector4f clipScratch = new Vector4f();
     private final Matrix4f invProjMatScratch = new Matrix4f();
     private final Matrix4f invViewMatScratch = new Matrix4f();
+    public record RayHit(ModelComponent hit, float distance) {}
 
 
     public RaycastService(Engine engine) {
@@ -62,27 +66,26 @@ public class RaycastService {
     }
 
 
-    public GameObject castRay(Vector3f position, Vector3f direction, List<GameObject> scanPool, float maxDistance, boolean onlyVisible) {
+    public RayHit castRay(Vector3f position, Vector3f direction, List<ModelComponent> scanPool, float maxDistance, boolean onlyVisible) {
         direction.normalize();
-        GameObject closest = null;
+        ModelComponent closest = null;
         float closestT = maxDistance;
-        for (GameObject go : scanPool) {
-            if (!go.hasComponent(ModelComponent.class)) continue;
-            ModelComponent model = go.getComponent(ModelComponent.class);
-            if (!model.isVisible() && onlyVisible) continue;
+        for (ModelComponent model : scanPool) {
+            if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
             float t = rayIntersects(position, direction, model.bounds);
             if (t >= 0.01f && t < closestT) {
                 closestT = t;
-                closest = go;
+                closest = model;
             }
         }
-        return closest;
+        if (closest == null) {return null;}
+        return new RayHit(closest, closestT);
     }
 
-    public Vector3f calculateScreenRay(float sX, float sY, Matrix4f projMatrix, Matrix4f viewMatrix) {
+    public Vector3f calculateScreenRay(float sX, float sY, Matrix4f projMatrix, Matrix4f viewMatrix, int screenWidth, int screenHeight) {
         // reverses the transformations we apply for 3D coordinates to crush it into 2D "just uncrushes it back"
-        float x = (2.0f * sX) / engine.getWindowWidth() - 1.0f;
-        float y = 1.0f - (2.0f * sY) / engine.getWindowHeight();
+        float x = (2.0f * sX) / screenWidth - 1.0f;
+        float y = 1.0f - (2.0f * sY) / screenHeight;
         // NDC Space -> Clip Space
         clipScratch.set(x, y, -1.0f, 1.0f);
         // Clip Space -> Eye Space
@@ -95,23 +98,32 @@ public class RaycastService {
         return new Vector3f(rayWorld.x, rayWorld.y, rayWorld.z).normalize();
     }
 
+    public Vector3f calculateScreenRay(float sX, float sY, Matrix4f projMatrix, Matrix4f viewMatrix) {
+        return calculateScreenRay(sX, sY, projMatrix, viewMatrix, engine.getWindowWidth(), engine.getWindowHeight());
+    }
 
 
-    public GameObject castScreenRay(float x, float y, Vector3f position, Matrix4f projMatrix, Matrix4f viewMatrix, List<GameObject> scanPool, float maxDistance, boolean onlyVisible) {
-        rDir.set(calculateScreenRay(x, y, projMatrix, viewMatrix));
-        GameObject closest = null;
+
+    public RayHit castScreenRay(float x, float y, Vector3f position, Matrix4f projMatrix, Matrix4f viewMatrix, int screenWidth, int screenHeight,  List<ModelComponent> scanPool, float maxDistance, boolean onlyVisible) {
+        rDir.set(calculateScreenRay(x, y, projMatrix, viewMatrix, screenWidth, screenHeight));
+        ModelComponent closest = null;
         float closestT = maxDistance;
-        for (GameObject go : scanPool) {
-            if (!go.hasComponent(ModelComponent.class)) continue;
-            ModelComponent model = go.getComponent(ModelComponent.class);
-            if (!model.isVisible() && onlyVisible) continue;
+        for (ModelComponent model : scanPool) {
+            if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
             float t = rayIntersects(position, rDir, model.bounds);
             if (t >= 0.01f && t < closestT) {
                 closestT = t;
-                closest = go;
+                closest = model;
             }
         }
-        return closest;
+        if (closest == null) {return null;}
+        return new RayHit(closest, closestT);
     }
+
+    public RayHit castScreenRay(float x, float y, Vector3f position, Matrix4f projMatrix, Matrix4f viewMatrix,  List<ModelComponent> scanPool, float maxDistance, boolean onlyVisible) {
+        return castScreenRay(x, y, position, projMatrix, viewMatrix, engine.getWindowWidth(), engine.getWindowHeight(), scanPool, maxDistance, onlyVisible);
+    }
+
+
 
 }

@@ -89,14 +89,10 @@ public class ColliderComponent extends Component {
     }
 
     @Override
-    protected void onObjectAttach() {
-        owner.getEngine().getCollisionService().register(this);
-    }
+    protected void onObjectAttach() {}
 
     @Override
-    protected void onObjectDetach() {
-        owner.getEngine().getCollisionService().unregister(this);
-    }
+    protected void onObjectDetach() {}
 
     @Override
     protected void onUpdate() {}

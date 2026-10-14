@@ -25,6 +25,10 @@
           <option name="color" value="#98C379" />
           <option name="type" value="*" />
         </CustomTag>
+        <CustomTag>
+          <option name="color" value="#6666FFFF" />
+          <option name="type" value="refactor" />
+        </CustomTag>
       </list>
     </option>
   </component>

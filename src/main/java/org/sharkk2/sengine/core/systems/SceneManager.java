@@ -20,16 +20,19 @@ public class SceneManager {
     }
 
     public void setActiveScene(Scene scene, boolean load) {
-        if (activeScene != null) {activeScene.destroy();}
+        if (activeScene != null) {
+            activeScene.destroy();
+            engine.getComponentRegistry().clearRegistry();
+        }
 
         activeScene = scene;
         if (load) activeScene.load();
-        if (!activeScene.spawnPoints.isEmpty() && engine.getCameraService().getPrimaryCamera() != null) {
-            CameraComponent cam = engine.getCameraService().getPrimaryCamera();
+        if (!activeScene.spawnPoints.isEmpty() && activeScene.getPrimaryCamera() != null) {
+            CameraComponent cam = activeScene.getPrimaryCamera();
             if (cam.getOwner() != null) {
                 Random random = new Random();
                 int loc = random.nextInt(activeScene.spawnPoints.size());
-                cam.getOwner().transform.setPosition(activeScene.spawnPoints.get(loc));
+                cam.getOwner().transform.position(activeScene.spawnPoints.get(loc));
             }
         }
         if (!scenes.containsKey(scene.id)) scenes.put(scene.id, scene);

@@ -2,23 +2,19 @@ package org.sharkk2.sengine.core.systems.components;
 
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
-import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.CubeShadowMap;
-import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.ShadowMap;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.lwjgl.opengl.GL43.*;
 
 public class LightComponent extends Component {
-    public enum LightType {SPOT_LIGHT, POINT_LIGHT};
-    public enum ShadowQuality {LOW, MEDIUM, HIGH};
-    public final LightType type;
+    public enum LightType {SPOT_LIGHT, POINT_LIGHT}
+    public enum ShadowQuality {LOW, MEDIUM, HIGH}
+    private LightType type;
     public final Vector3f offset = new Vector3f(0,0,0);
     public final Vector3f color = new Vector3f(1,1,1);
     public final Vector3f spotLightDirection = new Vector3f(0, 0, 0);
@@ -32,9 +28,10 @@ public class LightComponent extends Component {
     public int lightCookieTex = -1;
     public ShadowMap spotLightShadowMap = new ShadowMap(ShadowQuality.MEDIUM);
     public CubeShadowMap pointLightShadowMap = new CubeShadowMap(ShadowQuality.MEDIUM);
-    private List<ModelComponent> shadowCastingExclusions = new ArrayList<>();
+    private final List<ModelComponent> shadowCastingExclusions = new ArrayList<>();
     public boolean castShadow = false;
     public boolean bakeShadows = false;
+    public float shadowNormalBias = 0.03f;
     private final Matrix4f lightView = new Matrix4f();
     private final Matrix4f lightProj = new Matrix4f();
     private final Vector3f up = new Vector3f(0,1,0);
@@ -90,7 +87,10 @@ public class LightComponent extends Component {
     public LightComponent(LightType type) {
         this.type = type;
     }
-
+    public LightType getType() {return type;}
+    public void setType(LightType type) {if (type != null) this.type = type;}
+    public Vector3f getOffset() {return new Vector3f(offset);}
+    public Vector3f getSpotLightDirection() {return new Vector3f(spotLightDirection);}
     public void setShadowQuality(ShadowQuality quality) {
         this.spotLightShadowMap = new ShadowMap(quality);
         this.pointLightShadowMap = new CubeShadowMap(quality);
@@ -111,11 +111,7 @@ public class LightComponent extends Component {
     }
 
     @Override
-    protected void onObjectDetach() {
-        if (owner.getEngine().getSceneManager().isSceneRunning()) {
-            owner.getEngine().getSceneManager().getActiveScene().lights.removeLight(this);
-        }
-    }
+    protected void onObjectDetach() {}
 
     @Override
     protected void onUpdate() {
@@ -134,6 +130,8 @@ public class LightComponent extends Component {
         copy.range = range;
         copy.color.set(color);
         copy.lightCookieTex = lightCookieTex;
+        copy.shadowNormalBias = shadowNormalBias;
+        copy.shadowCastingExclusions.addAll(shadowCastingExclusions);
         copy.castShadow = castShadow;
         copy.constant = constant;
         copy.linear = linear;

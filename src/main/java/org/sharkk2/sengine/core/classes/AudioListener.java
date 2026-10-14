@@ -25,7 +25,9 @@ public class AudioListener {
     }
 
     public AudioListener(Engine engine) {
-        CameraComponent cam = engine.getCameraService().getPrimaryCamera();
+        Scene scene = engine.getSceneManager().getActiveScene();
+        if (scene == null) throw new AudioException("No active scene!");
+        CameraComponent cam = scene.getPrimaryCamera();
         if (cam == null) throw new AudioException("No valid listener is set! either set an active camera or pass a GameObject");
         attachedObject = cam.getOwner();
         this.engine = engine;
@@ -33,7 +35,9 @@ public class AudioListener {
 
     public void setObject(GameObject object) {
         if (object == null) {
-            CameraComponent cam = engine.getCameraService().getPrimaryCamera();
+            Scene scene = engine.getSceneManager().getActiveScene();
+            if (scene == null) throw new AudioException("No active scene!");
+            CameraComponent cam = scene.getPrimaryCamera();
             if (cam == null) throw new AudioException("No valid listener is set! either set an active camera or pass a GameObject");
             attachedObject = cam.getOwner();
         } else {

@@ -129,7 +129,7 @@ public class BloomPass extends RenderPass {
         glBindFramebuffer(GL_FRAMEBUFFER, frameContext.defaultFrameBuffer);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glEnable(GL_DEPTH_TEST);
-        frameContext.set("bloom.bloomTexture", bloomTexture);
+        frameContext.data.setValue("bloom.bloomTexture", bloomTexture);
     }
 
     public void debugDraw(int mip) {

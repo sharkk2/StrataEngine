@@ -13,6 +13,7 @@ uniform int dayTimeEffective;
 uniform int showSun;
 uniform int showMoon;
 uniform int showStars;
+uniform int showClouds;
 
 uniform int useMoonTex;
 uniform sampler2D moonTex;
@@ -226,7 +227,7 @@ float cloudCoverageFromWeather() {
 }
 
 vec3 renderClouds(vec3 dir, vec3 skyColor, float sunHeight, float coverage) {
-    if (coverage <= 0.0 || dir.y < 0.02) return skyColor;
+    if (coverage <= 0.0 || dir.y < 0.02 || showClouds==0) return skyColor;
 
     float scroll = float(dayTime) * 0.00003;
     vec2 uv = dir.xz / (dir.y + 0.15) * 0.5 + vec2(scroll, scroll * 0.6);

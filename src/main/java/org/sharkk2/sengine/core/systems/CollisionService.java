@@ -12,7 +12,6 @@ import java.util.*;
 
 public class CollisionService {
     private final Engine engine;
-    private final Map<UUID, ColliderComponent> colliders = new HashMap<>();
     public record Collision(GameObject collider, Vector3f mtv, float length) {}
     private final List<ColliderComponent> objColliders = new ArrayList<>();
 
@@ -20,18 +19,6 @@ public class CollisionService {
         this.engine = engine;
     }
 
-    public void register(ColliderComponent cc) {
-        if (colliders.containsKey(cc.getID())) {
-            Logger.error("Collider (" + cc.getID() + ") is already registered");
-            return;
-        }
-
-        colliders.put(cc.getID(), cc);
-    }
-
-    public void unregister(ColliderComponent cc) {
-        colliders.remove(cc.getID());
-    }
 
     public Collision checkCollision(ColliderComponent collider) {
         return checkCollision(collider, Collections.emptyList());
@@ -43,7 +30,7 @@ public class CollisionService {
         GameObject colliderObject = null;
         float bestLen = -1;
 
-        for (ColliderComponent cc : colliders.values()) {
+        for (ColliderComponent cc : engine.getComponentRegistry().getComponents(ColliderComponent.class)) {
             if (cc.getID().equals(collider.getID()) || blacklist.contains(cc)) {continue;}
             Vector3f mtv = collider.testCollision(cc.getBounds());
             if (mtv != null) {
@@ -84,7 +71,7 @@ public class CollisionService {
 
     public List<Collision> checkCollisionAll(ColliderComponent collider, List<ColliderComponent> blacklist) {
         List<Collision> results = new ArrayList<>();
-        for (ColliderComponent cc : colliders.values()) {
+        for (ColliderComponent cc : engine.getComponentRegistry().getComponents(ColliderComponent.class)) {
             if (cc.getID().equals(collider.getID()) || blacklist.contains(cc)) continue;
             Vector3f mtv = collider.testCollision(cc.getBounds());
             if (mtv != null) {

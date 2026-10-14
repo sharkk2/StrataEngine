@@ -6,27 +6,83 @@ import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.luaj.vm2.LuaError;
 import org.luaj.vm2.lib.jse.JsePlatform;
+import org.lwjgl.BufferUtils;
 import org.sharkk2.game.Game;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
+import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL11.GL_RGBA;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
+import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
+
 public class Helpers {
+    public static BufferedImage captureTexture(int tex, int width, int height) {
+        ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int i = (x + (height - 1 - y) * width) * 4;
+                int r = buffer.get(i) & 0xFF;
+                int g = buffer.get(i + 1) & 0xFF;
+                int b = buffer.get(i + 2) & 0xFF;
+                int a = buffer.get(i + 3) & 0xFF;
+                image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
+            }
+        }
+        return image;
+    }
+
     public static String readFile(String path) {
-        try (InputStream in = Helpers.class.getClassLoader().getResourceAsStream(path)) {
-            if (in == null) {
-                Logger.error("Couldn't find file: " + path);
+        return readFile(path, true);
+    }
+
+    public static String readFile(String path, boolean classpath) {
+        // todo: refactor this
+        if (classpath) {
+            try (InputStream in = Helpers.class.getClassLoader().getResourceAsStream(path)) {
+                if (in == null) {
+                    Logger.error("Couldn't find file: " + path);
+                    return null;
+                }
+                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                Logger.error("Failed to read file", e);
                 return null;
             }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            Logger.error("Failed to read file", e);
+        } else {
+            try  {
+                return Files.readString(Path.of(path));
+            } catch (IOException e) {
+                Logger.error("Failed to read file", e);
+                return null;
+            }
+
+        }
+
+    }
+
+    public static Path resolveClasspathFile(String classpathRelative) {
+        var url = Helpers.class.getClassLoader().getResource(classpathRelative);
+        if (url == null) return null;
+        if (!"file".equals(url.getProtocol())) return null;
+        try {
+            return Path.of(url.toURI());
+        } catch (java.net.URISyntaxException e) {
             return null;
         }
     }
@@ -99,4 +155,15 @@ public class Helpers {
         }
     }
 
+    public static boolean containsAlpha(ByteBuffer imagePixels, int width, int height, int channels) {
+        if (channels < 4) return false;
+        int totalPixels = width * height;
+        for (int i = 0; i < totalPixels; i++) {
+            int alpha = imagePixels.get(i * 4 + 3) & 0xFF;
+            if (alpha < 255) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

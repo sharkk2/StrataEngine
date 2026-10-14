@@ -6,33 +6,36 @@ layout (location = 2) out vec4 gAlbedo;
 layout (location = 3) out vec4 gMaterial;
 layout (location = 4) out vec3 gEmissive;
 
+flat in vec3 iAlbedo;
+flat in vec3 iEmissive;
+flat in vec4 iERMO_Material;
+
 in vec3 FragPos;
 in vec2 TexCoords;
 in vec3 WorldNormal;
 
+uniform int uInstanced;
+
 uniform sampler2D albedoTex;
-uniform vec3 albedo;
+uniform vec3 uAlbedo;
 
 uniform sampler2D metalnessTex;
-uniform float metalness;
+uniform float uMetalness;
 
 uniform sampler2D roughnessTex;
-uniform float roughness;
+uniform float uRoughness;
 
 uniform sampler2D normalTex;
 
 uniform sampler2D emissiveTex;
-uniform vec3 emissive;
-uniform float emissiveStrength;
+uniform vec3 uEmissive;
+uniform float uEmissiveStrength;
+
+uniform float uOpacity;
+uniform sampler2D opacityTex;
 
 uniform sampler2D aoTex;
-uniform sampler2D opacityTex;
-uniform float opacity;
 uniform int isPackedORM;
-
-uniform sampler2D alphaMaskTex;
-uniform float alphaMaskThreshold;
-uniform int alphaCutout;
 
 uniform int useAlbedoTex;
 uniform int useMetalnessTex;
@@ -41,15 +44,23 @@ uniform int useNormalTex;
 uniform int useEmissiveTex;
 uniform int useAoTex;
 uniform int useOpacityTex;
-uniform int useAlphaMaskTex;
 
 layout(std140, binding = 0) uniform Camera {
     mat4 projection;
     mat4 view;
     mat4 inverseView;
+    vec3 cameraPos;
 };
 
 void main() {
+    vec3 albedo = uInstanced == 1 ? iAlbedo : uAlbedo;
+    vec3 emissive = uInstanced == 1 ? iEmissive : uEmissive;
+    float emissiveStrength = uInstanced == 1 ? iERMO_Material.x : uEmissiveStrength;
+    float roughness = uInstanced == 1 ? iERMO_Material.y : uRoughness;
+    float metalness = uInstanced == 1 ? iERMO_Material.z : uMetalness;
+    float opacity = uInstanced == 1 ? iERMO_Material.w : uOpacity;
+
+
     vec4 mat_albedo = (useAlbedoTex == 1) ? texture(albedoTex, TexCoords) : vec4(albedo, opacity);
     mat_albedo.rgb = pow(mat_albedo.rgb, vec3(2.2));
 
@@ -57,14 +68,6 @@ void main() {
         mat_albedo.a = texture(opacityTex, TexCoords).r;
     } else if (opacity != 1) {
         mat_albedo.a = opacity;
-    }
-
-    if (useAlphaMaskTex == 1) {
-        if (texture(alphaMaskTex, TexCoords).r < alphaMaskThreshold) discard;
-    } else if (alphaCutout == 1) {
-        if (mat_albedo.a < alphaMaskThreshold) discard;
-    } else {
-        if (mat_albedo.a < 0.1) discard;
     }
 
     float mat_metalness = metalness;
@@ -101,7 +104,6 @@ void main() {
     } else {
         norm = normalize(WorldNormal);
     }
-
 
     vec3 mat_emissive = (useEmissiveTex == 1) ? pow(texture(emissiveTex, TexCoords).rgb, vec3(2.2)) : emissive;
 
