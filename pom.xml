@@ -6,7 +6,7 @@
 
     <groupId>org.sharkk2</groupId>
     <artifactId>StrataEngine</artifactId>
-    <version>3.1.0-SNAPSHOT</version>
+    <version>3.2.1-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.source>23</maven.compiler.source>

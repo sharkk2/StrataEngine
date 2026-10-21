@@ -27,7 +27,7 @@ public class Engine {
     public boolean running = false;
     private boolean devMode;
 
-    public final String version = "3.2.0";
+    public final String version = "3.2.1";
     private long windowHandle;
     private int windowWidth, windowHeight;
     private long monitor;
