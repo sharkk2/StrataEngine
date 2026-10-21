@@ -2,6 +2,7 @@ package org.sharkk2.sengine.core.systems.renderer.passes;
 
 import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
+import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Scene;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
@@ -44,7 +45,7 @@ public class ForwardPass extends RenderPass {
         } else {
             depthShader.setInt("uSkinned", 0);
         }
-        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
 
@@ -149,7 +150,15 @@ public class ForwardPass extends RenderPass {
         } else {
             objectShader.setInt("uSkinned", 0);
         }
-        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+
+        boolean disabled = false;
+        if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_NO_DEPTH) {
+            glDisable(GL_DEPTH_TEST);
+            disabled =true;
+        }
+        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+        if (disabled) glEnable(GL_DEPTH_TEST);
+
         glBindVertexArray(0);
     }
 

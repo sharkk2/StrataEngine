@@ -2034,9 +2034,14 @@ public class Imgui {
                     modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_FORWARD);
                 }
                 ImGui.sameLine();
+                if (ImGui.radioButton("No Depth", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_NO_DEPTH)) {
+                    modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_NO_DEPTH);
+                }
+                ImGui.sameLine();
                 if (ImGui.radioButton("Skip", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP)) {
                     modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_SKIP);
                 }
+
                 ImGui.separator();
                 ImGui.text("Material");
                 ModelComponent.Material mat = modelComp.material;

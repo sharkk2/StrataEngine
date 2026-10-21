@@ -110,7 +110,7 @@ public class MainScene extends Scene {
         light.castShadow = true;
         glight.transform.position(4, 23, 0);
         glight.attachComponent(light);
-        engine.getDebugger().visualizeLight(glight, true);
+        glight.attachComponent(new ScriptComponent((ctx) -> engine.getDebugger().visualizeLight(light)));
         glight.setName("thelight");
         addObject(glight);
       /*  lights.globalLight.direction.set(0.3f, 1f, 0.5f);

@@ -150,7 +150,6 @@ public class GameObject {
             markDirty(TransformEvent.ROTATION_CHANGE);
         }
 
-        public void rotate(Vector3f rot) { rotate(rot.x, rot.y, rot.z); }
 
         public void rotate(Quaternionf rotation) {
             this.rotation.set(rotation);
@@ -161,9 +160,9 @@ public class GameObject {
         public Vector3f getDirection() { return getRotationQuat().transform(new Vector3f(0, 0, 1)); }
         public Vector3f getUp() { return getRotationQuat().transform(new Vector3f(0, 1, 0)); }
 
-        public void applyOrientation(Vector3f direction) { applyOrientation(direction, new Vector3f(0, 1, 0)); }
+        public void rotate(Vector3f direction) { rotate(direction, new Vector3f(0, 1, 0)); }
 
-        public void applyOrientation(Vector3f direction, Vector3f up) {
+        public void rotate(Vector3f direction, Vector3f up) {
             Vector3f dir = new Vector3f(direction).normalize();
             Quaternionf worldRot = new Quaternionf().lookAlong(dir.negate(), up).conjugate();
             if (parent != null) {

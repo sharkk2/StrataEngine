@@ -1,8 +1,6 @@
 package org.sharkk2.sengine.core.systems.components;
 
-import imgui.extension.imguizmo.flag.Mode;
 import org.joml.*;
-import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
@@ -10,8 +8,6 @@ import org.sharkk2.sengine.core.classes.Scene;
 import java.lang.Math;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.sharkk2.sengine.Logger.getCallerClassName;
 
 public class CameraComponent extends Component {
     private float fov = 60f;
@@ -99,7 +95,7 @@ public class CameraComponent extends Component {
         rollRotation.transform(worldUp, up);
         rollRotation.transform(right);
 
-        owner.transform.applyOrientation(direction, up);
+        owner.transform.rotate(direction, up);
     }
 
 

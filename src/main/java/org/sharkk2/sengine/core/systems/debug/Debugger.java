@@ -12,19 +12,22 @@ import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
-import org.sharkk2.sengine.core.systems.components.ScriptComponent;
 import org.sharkk2.sengine.core.systems.renderer.RenderPrimitives;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.lwjgl.opengl.GL43.*;
 
 public class Debugger {
+    // todo: design a visualization system that's universal, clean and structured instead of this crap here
+
     private final Engine engine;
     private final Map<Bounds, GameObject> boundsObjects = new HashMap<>();
     private final Map<GameObject, GameObject> directionObjects = new HashMap<>();
+    private final Map<UUID, GameObject> visualizedLights = new HashMap<>();
     private final RenderPrimitives.RenderPrimitive overlayQuad = RenderPrimitives.quad();
     private int overlaySampler = -1;
     private long timeNano;
@@ -48,34 +51,36 @@ public class Debugger {
         return (System.nanoTime() - timeNano) / 1_000_000f;
     }
 
-    public void visualizeLight(GameObject lightObject, boolean faceCamera) {
-        // todo: add direction change for spot lights!!!
+    public void destroyVisualization(LightComponent light) {visualizedLights.remove(light.getID());}
+
+    public void visualizeLight(LightComponent light) {
         if (!engine.initialized) {throw new EngineInitException("Engine is not initialized!");}
-        if (!lightObject.hasComponent(LightComponent.class)) {
-            Logger.error("Object has no light to visualize");
-            return;
-        }
-
-        int spriteTex = engine.getAssetLoader().loadTexture("src/main/resources/textures/lightSprite.png", AssetLoader.TEXTURE_NONE);
-        ModelComponent billboard = engine.getAssetLoader().primitives.plane();
-        billboard.material.setAlbedoTexture(spriteTex);
-        billboard.name = "debug_billboard";
-        billboard.material.enabled = false;
-
-        lightObject.attachComponent(billboard);
-        if (faceCamera) {
-            lightObject.attachComponent(new ScriptComponent((ctx) -> {
+        if (visualizedLights.containsKey(light.getID())) {
+            GameObject lightObject = visualizedLights.get(light.getID());
                 CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
                 if (cam == null) return;
                 Vector3f camPos = cam.getOwner().transform.getPosition();
                 float dx = camPos.x - lightObject.transform.getX();
-                float dz = camPos.z - lightObject.transform.getY();
+                float dz = camPos.z - lightObject.transform.getZ();
                 float yaw = (float)Math.toDegrees(Math.atan2(dx, dz)) + 180f;
                 lightObject.transform.rotate(lightObject.transform.getPitch(), yaw, lightObject.transform.getRoll());
-            }));
+                lightObject.transform.position(light.getOwner().transform.getPosition());
+
+            engine.getRenderer().renderObject(lightObject);
+            return;
         }
 
-        lightObject.setName(lightObject.getName());
+        int spriteTex = engine.getAssetLoader().loadTexture("assets/textures/lightSprite.png", AssetLoader.TEXTURE_NONE);
+        ModelComponent billboard = engine.getAssetLoader().primitives.plane();
+        billboard.material.setAlbedoTexture(spriteTex);
+        billboard.name = "debug_billboard";
+        billboard.material.enabled = false;
+        billboard.frustumCulled = false;
+        billboard.setRenderMethod(Renderer.RenderMethod.RENDER_DEFERRED);
+
+        GameObject object = new GameObject(engine);
+        object.attachComponent(billboard);
+        visualizedLights.put(light.getID(), object);
     }
 
     public void visualizeBounds(Bounds bounds) {
@@ -109,7 +114,7 @@ public class Debugger {
 
 
         lineObj.transform.position(targetObj.transform.getPosition());
-        lineObj.transform.applyOrientation(targetObj.transform.getDirection());
+        lineObj.transform.rotate(targetObj.transform.getDirection());
         lineObj.transform.scale(1.0f, 1.0f, lineLength);
         engine.getRenderer().renderObject(lineObj);
 

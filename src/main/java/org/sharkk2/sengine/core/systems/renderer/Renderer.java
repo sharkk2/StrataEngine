@@ -29,7 +29,7 @@ import static org.lwjgl.opengl.GL43.*;
 
 public class Renderer {
     public enum RenderMode {MODE_ALL, MODE_BASECOLOR, MODE_METALNESS, MODE_ROUGHNESS, MODE_NORMALS, MODE_EMISSIVE, MODE_AO, MODE_OPACITY, MODE_DEFERRED_ONLY, MODE_MAX}
-    public enum RenderMethod {RENDER_DEFERRED, RENDER_FORWARD, RENDER_SKIP}
+    public enum RenderMethod {RENDER_DEFERRED, RENDER_FORWARD, RENDER_SKIP, RENDER_NO_DEPTH}
     public enum AntiAliasingMode {NONE, FXAA, SMAA}
     public enum DrawMode {TRIANGLES, LINES}
 
@@ -327,15 +327,7 @@ public class Renderer {
         frameContext.scene = scene;
         frameContext.mainCamera = camera;
         engine.getComponentRegistry().getComponents(ModelComponent.class, models);
-        if (wireframe) {
-            // fixme: wireframe mode is broken, i knew the reason 3 days ago and planned to fix it the next day but next day never came and now i forgot the reason
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            for (ModelComponent model : models) {drawBareModel(model);}
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            return;
-        } // if wireframe on, if we used deferred or post processing, the 2D fullscreen quads will cover the screen, plus its useless cuz its just lines
+
 
         // collecting objects
         // using the registry i found that it's 1.92x faster than finding models manually, but it's not even noticeable cuz both approaches were under a tenth of a millisecond
@@ -352,11 +344,13 @@ public class Renderer {
             if (!scene.containsObject(model.getOwner().getRoot().id) && !renderQueue.contains(model)) {
                 continue;
             }
+
+
             if (model.getRenderMethod() == RenderMethod.RENDER_SKIP) continue;
             if (camera.invisibleModels.contains(model)) continue;
             eligibleAnimModels.add(model);
             if (model.castsShadow() && model.getDrawMode() != Renderer.DrawMode.LINES) frameContext.shadowingModels.add(model);
-            if (engine.getIO("frustum_culling") && !camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !model.getOwner().isDebuggingObject) continue;
+            if (engine.getIO("frustum_culling") && model.frustumCulled && !camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !model.getOwner().isDebuggingObject) continue;
             if (model.material.isTransparent()) {
                 frameContext.transparentForwardModels.add(model);
             } else {

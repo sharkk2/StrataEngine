@@ -113,7 +113,7 @@ public class GBufferPass extends RenderPass {
 
 
     private void drawElements(ModelComponent model, int instanceCount) {
-        int mode = model.getDrawMode() == Renderer.DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES;
+        int mode = model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES;
         if (instanceCount > 0) {
             glDrawElementsInstanced(mode, model.indexCount, GL_UNSIGNED_INT, 0, instanceCount);
         } else {
@@ -122,6 +122,7 @@ public class GBufferPass extends RenderPass {
     }
 
     private void drawGDepthModel(ModelComponent model, int instanceCount, FrameContext ctx) {
+
         glBindVertexArray(model.vao);
         gBufferDepthShader.setInt("uInstanced", instanceCount > 0 ? 1 : 0);
         gBufferDepthShader.setMat4("uModel", model.getOwner().transform.calculateWorldMatrix());

@@ -36,6 +36,7 @@ public class ModelComponent extends Component {
     public float[] boneWeights;
     private Renderer.RenderMethod renderMethod = Renderer.RenderMethod.RENDER_DEFERRED;
     public boolean rigged = false;
+    public boolean frustumCulled = true;
     public int hash;
     private boolean hashDirty = true;
     public String batchID = "";

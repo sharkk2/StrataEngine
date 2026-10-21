@@ -178,7 +178,7 @@ public class ShadowPass extends RenderPass {
 
     @Override
     protected void onPass(FrameContext frameContext) {
-        if (!engine.getIO("shadows")) return;
+        if (!engine.getIO("shadows") || engine.getRenderer().wireframeEnabled()) return;
 
         frameContext.shadowingModels.sort(DRAW_ORDER);
 
