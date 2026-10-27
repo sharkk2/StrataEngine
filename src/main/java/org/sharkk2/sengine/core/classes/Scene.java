@@ -23,7 +23,6 @@ public abstract class Scene {
     protected final String name;
     protected boolean loaded = false;
     public Environment environment = new Environment();
-    public List<Vector3f> spawnPoints = new ArrayList<>();
     public long sceneLoadTimeMillis;
     private final ArrayDeque<GameObject> toAddQueue = new ArrayDeque<>();
     private final ArrayDeque<UUID> toRemoveQueue = new ArrayDeque<>();
@@ -128,7 +127,7 @@ public abstract class Scene {
 
         public Matrix4f calcLightSpace(Engine engine) {
             float size = engine.getValue("shadows.distance");
-            lightProj.identity().ortho(-size, size, -size, size, 1f, 300f);
+            lightProj.identity().ortho(-size, size, -size, size, 1f, 9999f);
             target.set(engine.getSceneManager().getActiveScene().getPrimaryCamera().getOwner().transform.getPosition());
             float texelSize = (size * 2f) / shadowMap.size;
             target.x = (float)(Math.floor(target.x / texelSize) * texelSize);
@@ -158,16 +157,13 @@ public abstract class Scene {
             return;
         }
         onLoad();
-        if (engine.isDevMode()) {
-            GameObject devObject = new GameObject(engine);
-            devObject.attachComponent(new CameraComponent());
-            devObject.attachComponent(new GenericControllerComponent());
-            devObject.setName("###DEV_OBJECT###");
-            devObject.isDebuggingObject = true;
-            addObject(devObject);
-            setPrimaryCamera(devObject.getComponent(CameraComponent.class));
-        }
-
+        GameObject devObject = new GameObject(engine);
+        devObject.attachComponent(new CameraComponent());
+        devObject.attachComponent(new GenericControllerComponent());
+        devObject.setName("###DEV_OBJECT###");
+        devObject.isDebuggingObject = true;
+        addObject(devObject);
+        setPrimaryCamera(devObject.getComponent(CameraComponent.class));
 
         sceneLoadTimeMillis = System.currentTimeMillis();
         loaded = true;
@@ -288,24 +284,6 @@ public abstract class Scene {
         }
     }
 
-    public void getAllModelComponents(List<ModelComponent> out) {
-        out.clear();
-        for (GameObject obj : objects.values()) {
-            collectModelComponents(obj, out);
-        }
-    }
-
-
-
-    private void collectModelComponents(GameObject current, List<ModelComponent> out) {
-        ModelComponent mc = current.getComponent(ModelComponent.class);
-        if (mc != null) out.add(mc);
-        if (current.children != null) {
-            for (GameObject child : current.children) {
-                collectModelComponents(child, out);
-            }
-        }
-    }
 
     private void collectRecursive(GameObject current, List<GameObject> collector) {
         collector.add(current);

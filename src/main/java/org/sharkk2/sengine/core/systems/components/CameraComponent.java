@@ -18,9 +18,11 @@ public class CameraComponent extends Component {
     private float yaw = 0f;
     private float roll = 0f;
     public boolean depthOfField = false;
+    public boolean hideSiblingModel = true;
     private float focusDistance = 15;
-    private float apertureFNumber = 1.8f;
-    private float focalLengthMillim = 50;
+    private float focusNearFalloff = 8f;
+    private float focusFarFalloff = 40f;
+    private float focusRange = 3f;
     private float vignette = 0.5f;
 
     private final Vector3f up = new Vector3f(0, 1, 0);
@@ -43,9 +45,7 @@ public class CameraComponent extends Component {
     }
     public int getLensDirtTexture() {return lensDirtTexture;}
 
-    public enum CompassDirection {
-        NORTH, SOUTH, EAST, WEST
-    }
+    public enum CompassDirection {NORTH, SOUTH, EAST, WEST}
 
     public Matrix4f getViewMatrix() {
         Vector3f eye = new Vector3f(owner.transform.getPosition()).add(positionOffset);
@@ -170,12 +170,14 @@ public class CameraComponent extends Component {
     public void getUp(Vector3f out) {out.set(up);}
     public float getRoll() {return roll;}
 
+    public void setFocusRange(float range) {this.focusRange = range;}
     public void setFocusDistance(float dist) {this.focusDistance = dist;}
-    public void setFocalLength(float millimeters) {this.focalLengthMillim = millimeters;}
-    public void setApertureFNumber(float fnum) {this.apertureFNumber = fnum;}
-    public float getApertureFNumber() {return apertureFNumber;}
+    public void setFocusNearFalloff(float meters) {this.focusNearFalloff = meters;}
+    public void setFocusFarFalloff(float meters) {this.focusFarFalloff = meters;}
+    public float getFocusNearFalloff() {return focusNearFalloff;}
+    public float getFocusFarFalloff() {return focusFarFalloff;}
     public float getFocusDistance() {return focusDistance;}
-    public float getFocalLength() {return focalLengthMillim;}
+    public float getFocusRange() {return focusRange;}
 
     public float getVignette() {return vignette;}
     public void setVignette(float vignette) {this.vignette = Math.clamp(vignette, 0, 1);}
@@ -213,9 +215,10 @@ public class CameraComponent extends Component {
         copy.setColorGradingLUT(colorGradingLUT);
         copy.setVignette(vignette);
         copy.depthOfField = depthOfField;
-        copy.setApertureFNumber(apertureFNumber);
+        copy.setFocusFarFalloff(focusFarFalloff);
         copy.setFocusDistance(focusDistance);
-        copy.setFocalLength(focalLengthMillim);
+        copy.setFocusNearFalloff(focusNearFalloff);
+        copy.setFocusRange(focusRange);
         return copy;
     }
 }

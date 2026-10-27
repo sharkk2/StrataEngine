@@ -1566,11 +1566,11 @@ public class Imgui {
         scene.environment.globalLight.color.set(color);
 
         float sunFactor = Math.max(0f, sunElevation);
-        float moonFactor = Math.max(0f, moonElevation) * 0.15f; // moon much dimmer than the sun
-        float dayFactor = Math.clamp(sunFactor + moonFactor, 0.05f, 1f);
+        float moonFactor = Math.max(0f, moonElevation) * 0.1f; // moon much dimmer than the sun
+        float dayFactor = Math.clamp(sunFactor + moonFactor, 0.025f, 1f);
 
-        scene.environment.globalLight.ambient.set(0.3f, 0.3f, 0.35f).mul(dayFactor);
-        scene.environment.globalLight.intensity = 0.2f + dayFactor * 1.3f;
+        scene.environment.globalLight.ambient.set(0.1f, 0.1f, 0.15f).mul(dayFactor);
+        scene.environment.globalLight.intensity = 0.6f + dayFactor * 1.3f;
     }
 
     private float smoothstep(float edge0, float edge1, float x) {
@@ -1967,23 +1967,29 @@ public class Imgui {
                 ImBoolean DoF = new ImBoolean(camComp.depthOfField);
                 if (ImGui.checkbox("Depth of field", DoF)) {camComp.depthOfField = DoF.get();}
                 ImGui.beginDisabled(!camComp.depthOfField);
-                float[] fnum = {camComp.getApertureFNumber()};
-                float[] focalLength = {camComp.getFocalLength()};
+                float[] nfo = {camComp.getFocusNearFalloff()};
+                float[] ffo = {camComp.getFocusFarFalloff()};
+                float[] fr = {camComp.getFocusRange()};
                 float[] focusDist = {camComp.getFocusDistance()};
-                textDim(String.format("Current aperture: %.1fmm (f/%.1f)", camComp.getFocalLength() / camComp.getApertureFNumber(), camComp.getApertureFNumber()));
-                if (ImGui.dragFloat("Aperture F-Number", fnum, 0.01f, 0.01f, 5)) {
-                    camComp.setApertureFNumber(fnum[0]);
-                }
-
-                if (ImGui.dragFloat("Focal Length (mm)", focalLength, 0.01f, 0.01f, 1000)) {
-                    camComp.setFocalLength(focalLength[0]);
+                if (ImGui.dragFloat("Focus range", fr, 0.01f, 0.01f, 9999)) {
+                    camComp.setFocusRange(fr[0]);
                 }
 
                 if (ImGui.dragFloat("Focus Distance", focusDist, 0.01f, 0.01f, 1000)) {
                     camComp.setFocusDistance(focusDist[0]);
                 }
+
+                if (ImGui.dragFloat("Focus near falloff", nfo, 0.01f, 0.01f, 1000)) {
+                    camComp.setFocusNearFalloff(nfo[0]);
+                }
+
+                if (ImGui.dragFloat("Focus far falloff", ffo, 0.01f, 0.01f, 1000)) {
+                    camComp.setFocusFarFalloff(ffo[0]);
+                }
+
                 ImGui.sameLine();
                 if (ImGui.button("Focus")) {
+                    Logger.info("Focusing");
                     RaycastService.RayHit hit = engine.getRaycastService().castRay(
                             camComp.getEyePosition(),
                             camComp.getDirection(),
@@ -1992,7 +1998,10 @@ public class Imgui {
                             true
                     );
                     if (hit != null) {
+                        Logger.info("Rayhit on: " + hit.distance() + " penetrating at " + hit.penetration());
+
                         camComp.setFocusDistance(hit.distance());
+                        camComp.setFocusRange(hit.penetration());
                     }
                 }
                 ImGui.endDisabled();
@@ -2378,7 +2387,7 @@ public class Imgui {
                 ImGui.text(String.format("Orientation (pitch,yaw,roll): %.1f, %.1f, %.1f", mainCamera.getPitch(), mainCamera.getYaw(), mainCamera.getRoll()));
                 ImGui.text(String.format("FOV (degrees): %.2f", mainCamera.getFov()));
                 ImGui.separator();
-                RaycastService.RayHit hit = engine.getRaycastService().castRay(mainCamera.getEyePosition(), mainCamera.getDirection(), engine.getComponentRegistry().getComponents(ModelComponent.class) ,20, true);
+                RaycastService.RayHit hit = engine.getRaycastService().castRay(mainCamera.getEyePosition(), mainCamera.getDirection(), engine.getComponentRegistry().getComponents(ModelComponent.class) ,mainCamera.getFar(), true);
                 if (hit!=null) {
                     ImGui.text("Looking at: " + hit.hit().getOwner().getRoot().getName());
                 } else {

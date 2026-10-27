@@ -21,14 +21,14 @@ public class RaycastService {
     private final Vector4f clipScratch = new Vector4f();
     private final Matrix4f invProjMatScratch = new Matrix4f();
     private final Matrix4f invViewMatScratch = new Matrix4f();
-    public record RayHit(ModelComponent hit, float distance) {}
+    public record RayHit(ModelComponent hit, float distance, float penetration) {}
 
 
     public RaycastService(Engine engine) {
         this.engine = engine;
     }
 
-    public float rayIntersects(Vector3f origin, Vector3f dir, Bounds bounds) {
+    public boolean rayIntersects(Vector3f origin, Vector3f dir, Bounds bounds, float[] out) {
         float tmin = 0;
         float tmax = Float.MAX_VALUE;
         bounds.obbAxes.getColumn(0, axisX);
@@ -51,18 +51,20 @@ public class RaycastService {
 
         for (int i = 0; i < 3; i++) {
             if (Math.abs(d[i]) < 1e-6f) { // what if the ray is parallel? it may not cross the boundaries of the obb!
-                if (o[i] < -h[i] || o[i] > h[i]) return -1; // we can simply check if its not between the boundary planes of the axis, if so, its not intersecting and we do an early return
+                if (o[i] < -h[i] || o[i] > h[i]) return false; // we can simply check if its not between the boundary planes of the axis, if so, its not intersecting and we do an early return
             } else {
                 float t1 = (-h[i] - o[i]) / d[i];
                 float t2 = (h[i] - o[i]) / d[i];
                 if (t1 > t2) {float tmp = t1; t1 = t2; t2 = tmp;} // t1 should always be min and t2 always max
                 tmin = Math.max(tmin, t1);
                 tmax = Math.min(tmax, t2);
-                if (tmin > tmax) return -1;
+                if (tmin > tmax) return false;
             }
         }
 
-        return tmin; // distance along the ray to the first hit
+        out[0] = tmin;
+        out[1] = tmax;
+        return true;
     }
 
 
@@ -70,16 +72,17 @@ public class RaycastService {
         direction.normalize();
         ModelComponent closest = null;
         float closestT = maxDistance;
+        float[] out = new float[2];
         for (ModelComponent model : scanPool) {
             if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
-            float t = rayIntersects(position, direction, model.bounds);
-            if (t >= 0.01f && t < closestT) {
-                closestT = t;
+            boolean hit = rayIntersects(position, direction, model.bounds, out);
+            if (hit && out[0] >= 0.01f && out[0] < closestT) {
+                closestT = out[0];
                 closest = model;
             }
         }
         if (closest == null) {return null;}
-        return new RayHit(closest, closestT);
+        return new RayHit(closest, closestT, out[1] - out[0]);
     }
 
     public Vector3f calculateScreenRay(float sX, float sY, Matrix4f projMatrix, Matrix4f viewMatrix, int screenWidth, int screenHeight) {
@@ -108,16 +111,17 @@ public class RaycastService {
         rDir.set(calculateScreenRay(x, y, projMatrix, viewMatrix, screenWidth, screenHeight));
         ModelComponent closest = null;
         float closestT = maxDistance;
+        float[] out = new float[2];
         for (ModelComponent model : scanPool) {
             if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
-            float t = rayIntersects(position, rDir, model.bounds);
-            if (t >= 0.01f && t < closestT) {
-                closestT = t;
+            boolean hit = rayIntersects(position, rDir, model.bounds, out);
+            if (hit && out[0] >= 0.01f && out[0] < closestT) {
+                closestT = out[0];
                 closest = model;
             }
         }
         if (closest == null) {return null;}
-        return new RayHit(closest, closestT);
+        return new RayHit(closest, closestT, out[1] - out[0]);
     }
 
     public RayHit castScreenRay(float x, float y, Vector3f position, Matrix4f projMatrix, Matrix4f viewMatrix,  List<ModelComponent> scanPool, float maxDistance, boolean onlyVisible) {

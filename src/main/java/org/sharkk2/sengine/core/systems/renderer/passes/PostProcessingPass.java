@@ -112,8 +112,9 @@ public class PostProcessingPass extends RenderPass {
         shader.setInt("gammaCorrect", engine.getIO("gamma_correct") ? 1:0);
         CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
 
-        shader.setFloat("fnumber", cam.getApertureFNumber());
-        shader.setFloat("focalLengthMillim", cam.getFocalLength());
+        shader.setFloat("focusRange", cam.getFocusRange());
+        shader.setFloat("focusNearFalloff", cam.getFocusNearFalloff());
+        shader.setFloat("focusFarFalloff", cam.getFocusFarFalloff());
         shader.setFloat("focusDist", cam.getFocusDistance());
         shader.setFloat("vignette", cam.getVignette());
         shader.setBoolean("DoFEnabled", cam.depthOfField);

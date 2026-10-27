@@ -36,10 +36,10 @@ const int GODRAY_SAMPLES = 64;
 
 uniform float maxCocPixels = 4;
 uniform float focusDist = 12;
-uniform float focalLengthMillim = 50;
-uniform float fnumber = 1.8f;
+uniform float focusRange = 3.0;
+uniform float focusNearFalloff = 8.0;
+uniform float focusFarFalloff = 40.0;
 uniform int DoFEnabled;
-const float SENSOR_HEIGHT_MM = 24.0;
 
 const int SAMPLES = 32;
 const float GOLDEN_ANGLE = 2.39996323;
@@ -132,31 +132,29 @@ vec3 bloomMix(vec3 clr) {
 }
 
 float getCoc(vec2 uv) {
-    float dist = -texture(gPosition, uv).z;
-    vec2 texelSize = vec2(1/screenSize.x, 1/screenSize.y);
-    float f = focalLengthMillim * 0.001;
-    float apertureDiameter = f / fnumber;
-    float cocMeters = apertureDiameter * f * (dist - focusDist) / (dist * (focusDist - f));
+    if (texture(depthTexture, uv).r >= 1.0) return maxCocPixels;
 
-    float pixelsPerMeter = (1.0 / texelSize.y) / (SENSOR_HEIGHT_MM * 0.001);
-    return clamp(cocMeters * pixelsPerMeter, -maxCocPixels, maxCocPixels);
+    float d = -texture(gPosition, uv).z - focusDist;
+    float t;
+    if (d < 0.0) t = -smoothstep(focusRange, focusRange + focusNearFalloff, -d);
+    else t = smoothstep(focusRange, focusRange + focusFarFalloff, d);
+    return t * maxCocPixels;
 }
 
-vec3 applyDof(vec2 uv, float centerCoc) {
+vec3 applyDof(vec2 uv, vec3 center, float centerCoc) {
     vec2 texel = 1.0 / vec2(textureSize(screenTexture, 0));
     float centerRadius = abs(centerCoc);
 
-    vec3 result = texture(screenTexture, uv).rgb;
+    vec3 result = center;
     float totalWeight = 1.0;
 
     for (int i = 0; i < SAMPLES; i++) {
         float r = sqrt((float(i) + 0.5) / float(SAMPLES));
         float a = float(i) * GOLDEN_ANGLE;
-        vec2 offset = vec2(cos(a), sin(a)) * r * centerRadius * texel;
-        vec2 sampleUv = uv + offset;
+        vec2 sampleUv = uv + vec2(cos(a), sin(a)) * r * centerRadius * texel;
 
         float sampleCoc = getCoc(sampleUv);
-        float weight = (abs(sampleCoc) >= r * centerRadius) ? 1.0 : 0.0;
+        float weight = clamp(abs(sampleCoc) - r * centerRadius + 0.5, 0.0, 1.0);
 
         result += texture(screenTexture, sampleUv).rgb * weight;
         totalWeight += weight;
@@ -172,28 +170,21 @@ void main() {
         default: color = texture(screenTexture, TexCoord).rgb; break;
     }
 
+    if (DoFEnabled == 1) {
+        float coc = getCoc(TexCoord);
+        float blurT = smoothstep(0.5, 2.0, abs(coc));
+        if (blurT > 0.0) {
+            color = mix(color, applyDof(TexCoord, color, coc), blurT);
+        }
+    }
+
     if (godraysEnabled == 1) {
         color += computeGodRays(TexCoord);
     }
 
     if (useBloom == 1) {
         if (useLensDirt == 1) color = bloomMix(color);
-        else {
-            vec3 bloomColor = texture(bloomTexture, TexCoord).rgb;
-            color += bloomColor * bloomStrength;
-        }
-    }
-
-    if (DoFEnabled == 1) {
-        float coc = getCoc(TexCoord);
-        float blurT = smoothstep(0.5, 2.0, abs(coc));
-        if (blurT >= 0.0) {
-            if (blurT >= 1.0) {
-                color = applyDof(TexCoord, coc);
-            } else {
-                color = mix(color, applyDof(TexCoord, coc), blurT);
-            }
-        }
+        else color += texture(bloomTexture, TexCoord).rgb * bloomStrength;
     }
 
     if (useHDR == 1) {

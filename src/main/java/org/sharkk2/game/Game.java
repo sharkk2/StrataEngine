@@ -3,6 +3,7 @@ package org.sharkk2.game;
 import org.sharkk2.game.scenes.MainScene;
 import org.sharkk2.game.scenes.RoomsScene;
 import org.sharkk2.game.scenes.TerrainScene;
+import org.sharkk2.game.scenes.tutScene;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 
@@ -46,9 +47,9 @@ public class Game extends Engine {
              getAssetLoader().loadModel("assets/models/human.glb", "human");
              getAssetLoader().loadModel("assets/models/smiler.glb", "smiler");
              getAssetLoader().loadModel("assets/models/crab/scene.gltf", "crab");
-             getAssetLoader().loadModel("assets/models/phoenix.glb", "phoenix");
              getAssetLoader().loadModel("assets/models/shark.glb", "real_shark");
-
+             getAssetLoader().loadModel("assets/models/phoenix.glb", "phoenix");
+             getAssetLoader().loadModel("assets/models/backpack/backpack.obj", "backpack");
 
              getThreadService().runMainThread(() -> {
                  getSceneManager().setActiveScene(new MainScene(this, "main_scene"));

@@ -340,6 +340,7 @@ public class Renderer {
 
         // todo: have the frameContext carry batch lists with their models checked so passes do not need to manually do this
         eligibleAnimModels.clear();
+        ModelComponent cameraSibling = camera.getOwner().getComponent(ModelComponent.class);
         for (ModelComponent model : models) { // you have ALL the model components in the entire game here
             if (!scene.containsObject(model.getOwner().getRoot().id) && !renderQueue.contains(model)) {
                 continue;
@@ -348,6 +349,10 @@ public class Renderer {
 
             if (model.getRenderMethod() == RenderMethod.RENDER_SKIP) continue;
             if (camera.invisibleModels.contains(model)) continue;
+            if (cameraSibling != null && camera.hideSiblingModel && model.getID().equals(cameraSibling.getID())) {
+                cameraSibling = null;
+                continue;
+            }
             eligibleAnimModels.add(model);
             if (model.castsShadow() && model.getDrawMode() != Renderer.DrawMode.LINES) frameContext.shadowingModels.add(model);
             if (engine.getIO("frustum_culling") && model.frustumCulled && !camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !model.getOwner().isDebuggingObject) continue;

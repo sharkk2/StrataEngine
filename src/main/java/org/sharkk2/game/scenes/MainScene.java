@@ -203,7 +203,6 @@ public class MainScene extends Scene {
         animation2.play("Action");
 
 
-        spawnPoints.add(new Vector3f(5,26,5));
         environment.globalLight.intensity = 10;
         environment.globalLight.ambient.set(0.03, 0.03, 0.04);
         environment.fog.enabled = false;
