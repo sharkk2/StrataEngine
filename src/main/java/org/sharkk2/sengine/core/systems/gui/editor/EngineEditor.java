@@ -1,4 +1,4 @@
-package org.sharkk2.sengine.core.systems.gui;
+package org.sharkk2.sengine.core.systems.gui.editor;
 
 import imgui.*;
 import imgui.extension.imguizmo.ImGuizmo;
@@ -17,7 +17,6 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
-import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.sharkk2.sengine.Engine;
@@ -30,8 +29,11 @@ import org.sharkk2.sengine.core.classes.animation.Animation;
 import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.RaycastService;
 import org.sharkk2.sengine.core.systems.components.*;
-import org.sharkk2.sengine.core.systems.components.ModelComponent.Material;
 import org.sharkk2.sengine.core.systems.debug.HardwareMonitor;
+import org.sharkk2.sengine.core.systems.gui.editor.commands.LifecycleCommand;
+import org.sharkk2.sengine.core.systems.gui.editor.commands.RenameCommand;
+import org.sharkk2.sengine.core.systems.gui.editor.commands.ReparentCommand;
+import org.sharkk2.sengine.core.systems.gui.editor.commands.TransformCommand;
 import org.sharkk2.sengine.core.systems.renderer.RenderPass;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -42,7 +44,6 @@ import static org.lwjgl.opengl.GL43.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.*;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -50,20 +51,16 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
-public class Imgui {
+public class EngineEditor {
     private final Engine engine;
     private boolean initialized = false;
     private final ImGuiImplGlfw imGuiGlfw = new ImGuiImplGlfw();
     private final ImGuiImplGl3 imGuiGl3 = new ImGuiImplGl3();
     private final Map<String, Float> defaultValueConfig = new HashMap<>();
     private int manipulationMode = Operation.TRANSLATE;
-    private GameObject selectedObject;
+    public GameObject selectedObject;
 
-    private interface EditCommand {
-        void undo();
-        void redo();
-        void remap(GameObject from, GameObject to);
-    }
+
 
     private static final int MAX_HISTORY = 200;
     private final Deque<EditCommand> undoStack = new ArrayDeque<>();
@@ -80,7 +77,7 @@ public class Imgui {
     private final float[] viewBefore = new float[16];
     private final Matrix4f tmpMat = new Matrix4f();
     private final Quaternionf tmpQuat = new Quaternionf();
-    private Component selectedComponent = null;
+    public Component selectedComponent = null;
 
     private static final int FRAME_HISTORY_SIZE = 90;
     private static final float FT_UPDATE_INTERVAL = 0.1f;
@@ -104,6 +101,8 @@ public class Imgui {
     private final ImInt divisions = new ImInt(8);
     private final ImBoolean capped = new ImBoolean(true);
     private final ImString newTagName = new ImString(128);
+    ImBoolean preserveTransform = new ImBoolean(true);
+
     private float lastFPS = -1;
     private float lastMS = -1;
     private float[] lastCpuMS = new float[0];
@@ -133,7 +132,7 @@ public class Imgui {
     private List<Logger.Entry> consoleEntries = new ArrayList<>();
     private long lastConsoleRevision = -1;
 
-    public Imgui(Engine engine) {
+    public EngineEditor(Engine engine) {
         this.engine = engine;
     }
     public boolean isMouseInViewport() {return isMouseInViewport;}
@@ -369,6 +368,8 @@ public class Imgui {
 
             if (selectedObject != null) {
                 Matrix4f world = selectedObject.transform.calculateWorldMatrix();
+                Vector3f piv = selectedObject.transform.getPivotPoint();
+                world.translate(piv);
                 world.get(matrix);
 
                 engine.getDebugger().visualizeDirection(selectedObject, 3);
@@ -389,6 +390,7 @@ public class Imgui {
                 if (isUsingGizmo) {
                     Quaternionf savedRotation = new Quaternionf(selectedObject.transform.getRotationQuat());
                     Matrix4f result = new Matrix4f().set(matrix);
+                    result.translate(-piv.x, -piv.y, -piv.z);
                     selectedObject.transform.applyWorldMatrix(result);
                     if (manipulationMode == Operation.SCALE) {
                         selectedObject.transform.rotate(savedRotation);
@@ -434,6 +436,9 @@ public class Imgui {
                 }
                 if (ImGui.menuItem("Screenshot", "Ctrl+F11")) {
                     saveScreenshot();
+                }
+                if (ImGui.menuItem("Instancing", "", engine.getIO("instancing"))) {
+                    engine.setIO("instancing", !engine.getIO("instancing"));
                 }
                 ImGui.endMenu();
             }
@@ -586,166 +591,31 @@ public class Imgui {
     }
 
     /**Called when an object is rebuilt so older history entries keep pointing at a live object*/
-    private void remapAll(GameObject from, GameObject to) {
+    public void remapAll(GameObject from, GameObject to) {
         for (EditCommand c : undoStack) c.remap(from, to);
         for (EditCommand c : redoStack) c.remap(from, to);
         if (selectedObject == from) selectedObject = to;
     }
 
-    private class TransformCommand implements EditCommand {
-        private GameObject object;
-        private final Matrix4f before;
-        private final Matrix4f after;
 
-        TransformCommand(GameObject object, Matrix4f before, Matrix4f after) {
-            this.object = object;
-            this.before = before;
-            this.after = after;
-        }
-
-        public void undo() { object.transform.applyWorldMatrix(before); }
-        public void redo() { object.transform.applyWorldMatrix(after); }
-        public void remap(GameObject from, GameObject to) { if (object == from) object = to; }
+    public static class Snapshot {
+        public String name;
+        public boolean debug;
+        public Vector3f position;
+        public Vector3f scale;
+        public Quaternionf rotation;
+        public List<Component> components = new ArrayList<>();
+        public List<Snapshot> children = new ArrayList<>();
     }
 
-    private class RenameCommand implements EditCommand {
-        private GameObject object;
-        private final String before;
-        private final String after;
-
-        RenameCommand(GameObject object, String before, String after) {
-            this.object = object;
-            this.before = before;
-            this.after = after;
-        }
-
-        public void undo() { object.setName(before); }
-        public void redo() { object.setName(after); }
-        public void remap(GameObject from, GameObject to) { if (object == from) object = to; }
-    }
-
-    private class ReparentCommand implements EditCommand {
-        private GameObject object;
-        private GameObject from;
-        private GameObject to;
-
-        ReparentCommand(GameObject object, GameObject from, GameObject to) {
-            this.object = object;
-            this.from = from;
-            this.to = to;
-        }
-
-        public void undo() { reparent(object, from); }
-        public void redo() { reparent(object, to); }
-        public void remap(GameObject f, GameObject t) {
-            if (object == f) object = t;
-            if (from == f) from = t;
-            if (to == f) to = t;
-        }
-    }
-
-    private class LifecycleCommand implements EditCommand {
-        private GameObject live;
-        private GameObject parent;
-        private Snapshot snapshot;
-        private List<GameObject> tree;
-        private boolean exists;
-
-        LifecycleCommand(GameObject live, GameObject parent, boolean exists) {
-            this.live = live;
-            this.parent = parent;
-            this.exists = exists;
-            this.tree = flatten(live);
-        }
-
-        void flip() {
-            if (exists) {
-                unhideTree(live);
-                snapshot = capture(live);
-                tree = flatten(live);
-                removeFromScene(live);
-                exists = false;
-            } else {
-                GameObject fresh = build(snapshot);
-                attachToScene(fresh, parent);
-                List<GameObject> freshTree = flatten(fresh);
-                for (int i = 0; i < tree.size() && i < freshTree.size(); i++) {
-                    remapAll(tree.get(i), freshTree.get(i));
-                }
-                live = fresh;
-                tree = freshTree;
-                selectedObject = fresh;
-                selectedComponent = null;
-                exists = true;
-            }
-        }
-
-        public void undo() {flip();}
-        public void redo() {flip();}
-        public void remap(GameObject from, GameObject to) {
-            if (live == from) live = to;
-            if (parent == from) parent = to;
-        }
-    }
-
-    private static class Snapshot {
-        String name;
-        boolean debug;
-        Vector3f position;
-        Vector3f scale;
-        Quaternionf rotation;
-        List<Component> components = new ArrayList<>();
-        List<Snapshot> children = new ArrayList<>();
-    }
-
-    private Snapshot capture(GameObject o) {
-        Snapshot s = new Snapshot();
-        s.name = o.getName();
-        s.debug = o.isDebuggingObject;
-        s.position = o.transform.getPosition();
-        s.scale = o.transform.getScale();
-        s.rotation = new Quaternionf(o.transform.getRotationQuat());
-        for (Component c : o.getComponents()) s.components.add(c.copy());
-        for (GameObject child : o.children) s.children.add(capture(child));
-        return s;
-    }
-
-    private GameObject build(Snapshot s) {
-        GameObject o = new GameObject(engine);
-        o.setName(s.name);
-        o.isDebuggingObject = s.debug;
-        o.transform.position(s.position);
-        o.transform.scale(s.scale);
-        o.transform.rotate(new Quaternionf(s.rotation));
-        for (Component c : s.components) o.attachComponent(c.copy());
-        for (Snapshot child : s.children) o.addChild(build(child));
-        return o;
-    }
-
-    private List<GameObject> flatten(GameObject root) {
-        List<GameObject> out = new ArrayList<>();
-        root.cascade(out::add);
-        return out;
-    }
 
     /**True if node is the ancestor itself or lives somewhere below it*/
-    private boolean isInTree(GameObject ancestor, GameObject node) {
-        GameObject current = node;
-        while (current != null) {
-            if (current == ancestor) return true;
-            current = current.parent;
-        }
-        return false;
-    }
 
-    private void attachToScene(GameObject object, GameObject parent) {
-        if (parent != null) parent.addChild(object);
-        else engine.getSceneManager().getActiveScene().addObject(object);
-    }
 
-    private void removeFromScene(GameObject target) {
+
+    public void removeFromScene(GameObject target) {
         Scene scene = engine.getSceneManager().getActiveScene();
-        if (selectedObject != null && isInTree(target, selectedObject)) {
+        if (selectedObject != null && GameObject.isInTree(target, selectedObject)) {
             selectedObject = null;
             selectedComponent = null;
         }
@@ -759,20 +629,20 @@ public class Imgui {
         target.destroy();
     }
 
-    private void untagAll(Scene scene, GameObject object) {
+    public void untagAll(Scene scene, GameObject object) {
         for (String tag : new ArrayList<>(scene.getTags())) {
             if (scene.isTagged(object, tag)) scene.untagObject(object, tag);
         }
     }
 
-    private void deleteSelected() {
+    public void deleteSelected() {
         if (selectedObject != null) deleteObject(selectedObject);
     }
 
-    private void deleteObject(GameObject target) {
+    public void deleteObject(GameObject target) {
         if (target == null || target.isDebuggingObject) return;
         CameraComponent primary = engine.getSceneManager().getActiveScene().getPrimaryCamera();
-        if (primary != null && isInTree(target, primary.getOwner())) {
+        if (primary != null && GameObject.isInTree(target, primary.getOwner())) {
             Logger.warning("Can't delete " + target.getName() + ": it owns the primary camera");
             return;
         }
@@ -788,41 +658,23 @@ public class Imgui {
         if (wasHidden) setHidden(source, false);
         GameObject copy = source.clone();
         if (wasHidden) setHidden(source, true);
-        attachToScene(copy, source.parent);
+        if (source.parent != null) source.parent.addChild(copy);
+        else engine.getSceneManager().getActiveScene().addObject(copy);
         pushCommand(new LifecycleCommand(copy, source.parent, true));
         selectedObject = copy;
         selectedComponent = null;
     }
 
-    private void focusSelected() {
+    public void focusSelected() {
         CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
         if (cam != null && selectedObject != null) cam.lookAt(selectedObject.transform.getPosition());
     }
 
-    private void reparent(GameObject object, GameObject newParent) {
-        Scene scene = engine.getSceneManager().getActiveScene();
-        Matrix4f world = object.transform.calculateWorldMatrix();
-        if (object.parent != null) {
-            object.parent.children.remove(object);
-            object.parent = null;
-        } else {
-            scene.removeObject(object.id);
-        }
-        if (newParent != null) newParent.addChild(object);
-        else scene.addObject(object);
-        object.transform.applyWorldMatrix(world);
-    }
 
-    private boolean canReparent(GameObject dragged, GameObject target) {
-        if (dragged == null || dragged == target) return false;
-        if (dragged.parent == target) return false;
-        return target == null || !isInTree(dragged, target);
-    }
-
-    private void doReparent(GameObject dragged, GameObject target) {
-        if (!canReparent(dragged, target)) return;
+    private void reparent(GameObject dragged, GameObject target) {
+        if (!GameObject.canAdopt(dragged, target)) return;
         GameObject oldParent = dragged.parent;
-        reparent(dragged, target);
+        GameObject.adopt(dragged, target);
         pushCommand(new ReparentCommand(dragged, oldParent, target));
     }
 
@@ -851,9 +703,9 @@ public class Imgui {
     }
 
 
-    private boolean isHidden(GameObject o) {return hiddenObjects.contains(o);}
+    public boolean isHidden(GameObject o) {return hiddenObjects.contains(o);}
 
-    private void setHidden(GameObject root, boolean hide) {
+    public void setHidden(GameObject root, boolean hide) {
         root.cascade(go -> {
             if (hide) hiddenObjects.add(go);
             else hiddenObjects.remove(go);
@@ -872,7 +724,7 @@ public class Imgui {
         });
     }
 
-    private void unhideTree(GameObject root) {setHidden(root, false);}
+    public void unhideTree(GameObject root) {setHidden(root, false);}
 
     private void renderConsole() {
         if (!showConsole.get()) return;
@@ -1153,7 +1005,7 @@ public class Imgui {
             if (ImGui.isItemClicked()) {selectedObject = null; selectedComponent = null;}
             if (ImGui.beginDragDropTarget()) {
                 Object payload = ImGui.acceptDragDropPayload("GAMEOBJECT");
-                if (payload instanceof GameObject dragged) doReparent(dragged, null);
+                if (payload instanceof GameObject dragged) reparent(dragged, null);
                 ImGui.endDragDropTarget();
             }
         }
@@ -1278,7 +1130,7 @@ public class Imgui {
         }
         if (ImGui.beginDragDropTarget()) {
             Object payload = ImGui.acceptDragDropPayload("GAMEOBJECT");
-            if (payload instanceof GameObject dragged) doReparent(dragged, obj);
+            if (payload instanceof GameObject dragged) reparent(dragged, obj);
             ImGui.endDragDropTarget();
         }
 
@@ -1288,7 +1140,7 @@ public class Imgui {
             if (ImGui.menuItem("Focus", "F")) focusSelected();
             if (ImGui.menuItem("Duplicate", "Ctrl+D")) duplicateSelected();
             if (ImGui.menuItem(hidden ? "Show" : "Hide")) setHidden(obj, !hidden);
-            if (ImGui.menuItem("Unparent", "", false, obj.parent != null)) doReparent(obj, null);
+            if (ImGui.menuItem("Unparent", "", false, obj.parent != null)) reparent(obj, null);
             if (ImGui.menuItem("Copy ID")) ImGui.setClipboardText(obj.id.toString());
             ImGui.separator();
             if (ImGui.menuItem("Delete", "Del")) deleteObject(obj);
@@ -1735,6 +1587,31 @@ public class Imgui {
                 object.transform.position(pos);
             }
 
+
+            ImGui.text("Pivot point");
+            ImGui.sameLine();
+            if (ImGui.smallButton("Center pivot")) {
+                // i spent a lot of time here just to realize that the pivot point should be in objedt space
+                Matrix4f invObjWorld = object.transform.calculateWorldMatrix().invert();
+                List<Vector3f> points = new ArrayList<>();
+
+                object.cascade(ModelComponent.class, mc -> points.add(invObjWorld.transformPosition(new Vector3f(mc.bounds.worldCenter))));
+
+                if (!points.isEmpty()) {
+                    Vector3f center = Helpers.calculateCenter(points.toArray(new Vector3f[0]));
+                    object.transform.setPivotPoint(center, preserveTransform.get());
+                }
+            }
+            Vector3f pivpos = object.transform.getPivotPoint();
+            if (renderPositionField("pivpos", pivpos)) {
+                beginTransformEdit(object);
+                object.transform.setPivotPoint(pivpos, preserveTransform.get());
+                endTransformEdit();
+            }
+
+            ImGui.checkbox("Preserve tansform after pivoting", preserveTransform);
+
+
             ImGui.text("World scale");
             ImGui.sameLine();
             if (ImGui.smallButton("Reset##scale")) {
@@ -1998,8 +1875,6 @@ public class Imgui {
                             true
                     );
                     if (hit != null) {
-                        Logger.info("Rayhit on: " + hit.distance() + " penetrating at " + hit.penetration());
-
                         camComp.setFocusDistance(hit.distance());
                         camComp.setFocusRange(hit.penetration());
                     }
@@ -2102,6 +1977,8 @@ public class Imgui {
                     if (state) modelComp.batch();
                     else modelComp.unbatch();
                 }
+                ImGui.sameLine();
+                textDim("ID: " + (batched.get()?modelComp.batchID:"nil"));
                 ImGui.spacing();
                 ImGui.text("Textures");
                 textDim("Albedo: " + mat.getAlbedoTexture());

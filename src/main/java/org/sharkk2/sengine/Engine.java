@@ -7,7 +7,7 @@ import org.sharkk2.sengine.core.systems.*;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.debug.Debugger;
 import org.sharkk2.sengine.core.systems.debug.HardwareMonitor;
-import org.sharkk2.sengine.core.systems.gui.Imgui;
+import org.sharkk2.sengine.core.systems.gui.editor.EngineEditor;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 import org.sharkk2.sengine.core.systems.ShaderService;
 
@@ -49,7 +49,7 @@ public class Engine {
     private Renderer renderer;
     private SceneManager sceneManager;
     private ScriptService scriptService;
-    private Imgui sengineImGui;
+    private EngineEditor sengineEditor;
     private AudioService audioService;
     private CollisionService collisionService;
     private ThreadService threadService;
@@ -74,7 +74,7 @@ public class Engine {
     public void setWindowTitle(String title) {glfwSetWindowTitle(windowHandle, title);}
     public String getWindowTitle() {return glfwGetWindowTitle(windowHandle);}
     public int getTotalFrameCount() {return totalFrameCount;}
-    public Imgui getEngineImGui() {return devMode ? sengineImGui:null;}
+    public EngineEditor getEngineEditor() {return devMode ? sengineEditor :null;}
     /**returns current time in milliseconds*/
     public long getCurrentTime() {return System.currentTimeMillis();}
     public InputService getInputService() {return inputService;}
@@ -221,8 +221,8 @@ public class Engine {
         componentRegistry.scanComponents();
 
         if (devMode) {
-            sengineImGui = new Imgui(this);
-            sengineImGui.initialize();
+            sengineEditor = new EngineEditor(this);
+            sengineEditor.initialize();
         }
 
         Logger.info("SharkEngine initialized! (" + ((System.currentTimeMillis() - ctime) / 1000) + "s)");
@@ -276,8 +276,8 @@ public class Engine {
             }
 
             inputService.update();
-            if (devMode && sengineImGui != null) {
-                sengineImGui.renderImGui();
+            if (devMode && sengineEditor != null) {
+                sengineEditor.renderImGui();
             }
 
             threadService.drainTasks();

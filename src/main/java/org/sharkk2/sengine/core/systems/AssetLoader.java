@@ -86,15 +86,17 @@ public class AssetLoader {
 
     public Set<String> getLoadedModels() {return modelCache.keySet();}
 
+    public void loadModel(String path, String id) {loadModel(path, id, true);}
 
-    public void loadModel(String path, String id) {
+    public void loadModel(String path, String id, boolean optimizeModel) {
         long time = System.currentTimeMillis();
         if (modelCache.containsKey(id)) {
             Logger.warning("Asset (" + id + ") is already loaded");
             return;
         }
 
-        int flags = aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_OptimizeMeshes | aiProcess_CalcTangentSpace | aiProcess_LimitBoneWeights;
+        int flags = aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights;
+        if (optimizeModel) flags = flags | aiProcess_OptimizeMeshes;
         AIScene aiScene = aiImportFile(path, flags);
 
         if (aiScene == null || (aiScene.mFlags() & AI_SCENE_FLAGS_INCOMPLETE) != 0 || aiScene.mRootNode() == null) {

@@ -28,6 +28,24 @@ import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
 
 public class Helpers {
+    public static Vector3f calculateCenter(Vector3f... points) {
+        Vector3f min = new Vector3f(Float.MAX_VALUE);
+        Vector3f max = new Vector3f(-Float.MAX_VALUE);
+        for (Vector3f p : points) {
+            if (p.x < min.x) min.x = p.x;
+            if (p.y < min.y) min.y = p.y;
+            if (p.z < min.z) min.z = p.z;
+            if (p.x > max.x) max.x = p.x;
+            if (p.y > max.y) max.y = p.y;
+            if (p.z > max.z) max.z = p.z;
+        }
+
+        float cx = (min.x + max.x) * 0.5f; //midpoint formula
+        float cy = (min.y + max.y) * 0.5f;
+        float cz = (min.z + max.z) * 0.5f;
+        return new Vector3f(cx, cy, cz);
+    }
+
     public static BufferedImage captureTexture(int tex, int width, int height) {
         ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);
         glBindTexture(GL_TEXTURE_2D, tex);

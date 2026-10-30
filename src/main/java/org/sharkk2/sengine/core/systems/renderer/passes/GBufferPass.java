@@ -279,7 +279,6 @@ public class GBufferPass extends RenderPass {
 
         }
 
-
         glDepthFunc(GL_LESS);
         glDepthMask(true);
         glStencilMask(0x00);

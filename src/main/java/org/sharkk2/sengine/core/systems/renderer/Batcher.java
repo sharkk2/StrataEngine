@@ -1,5 +1,6 @@
 package org.sharkk2.sengine.core.systems.renderer;
 
+import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 
 import java.util.*;

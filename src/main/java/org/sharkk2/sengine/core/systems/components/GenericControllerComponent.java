@@ -63,7 +63,7 @@ public class GenericControllerComponent extends Component {
         }
 
         if (cameraIndex != -1) return;
-        if (engine.isDevMode() && !engine.getEngineImGui().isMouseInViewport() && (ImGui.getIO().getWantCaptureMouse() || ImGui.getIO().getWantCaptureKeyboard())) {
+        if (engine.isDevMode() && !engine.getEngineEditor().isMouseInViewport() && (ImGui.getIO().getWantCaptureMouse() || ImGui.getIO().getWantCaptureKeyboard())) {
             return;
         }
         double scroll = input.getScrollDY();

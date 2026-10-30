@@ -146,13 +146,13 @@ public class MainScene extends Scene {
 
         addObject(cubie);
 
-        GameObject pokeball = engine.getAssetLoader().getModel("pokeball");
-        pokeball.transform.position(30, 40, 30);
-        pokeball.transform.scale(0.01f);
-        pokeball.cascade(ModelComponent.class, (mc) -> {
-            mc.material.emissiveStrength = 5;
-        });
-        addObject(pokeball);
+
+        GameObject firethingie = engine.getAssetLoader().getModel("fireHydrant");
+        firethingie.transform.position(30, 40, 30);
+        firethingie.cascade(ModelComponent.class, ModelComponent::batch);
+        addObject(firethingie);
+
+
 
         GameObject gridie = new GameObject(engine);
         gridie.attachComponent(engine.getAssetLoader().primitives.grid(12));

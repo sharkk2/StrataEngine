@@ -134,6 +134,7 @@ vec3 bloomMix(vec3 clr) {
 float getCoc(vec2 uv) {
     if (texture(depthTexture, uv).r >= 1.0) return maxCocPixels;
 
+    // the falloff is added on top of the focus distance and range so it can feel weird a little, might fix that
     float d = -texture(gPosition, uv).z - focusDist;
     float t;
     if (d < 0.0) t = -smoothstep(focusRange, focusRange + focusNearFalloff, -d);

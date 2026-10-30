@@ -41,10 +41,11 @@ public class Game extends Engine {
              getAssetLoader().loadModel("assets/models/mechanical_shark/scene.gltf", "shark");
              getAssetLoader().loadModel("assets/models/starpiercer_sword.glb", "sword");
              getAssetLoader().loadModel("assets/models/flashlight.glb", "flashlight");
-             getAssetLoader().loadModel("assets/models/backroomsmap.glb", "map");
+             // getAssetLoader().loadModel("assets/models/backroomsmap.glb", "map");
              getAssetLoader().loadModel("assets/models/pokeball.glb", "pokeball");
-             getAssetLoader().loadModel("assets/models/desert.glb", "terrain");
-             getAssetLoader().loadModel("assets/models/human.glb", "human");
+             getAssetLoader().loadModel("assets/models/fire_hydrant.glb", "fireHydrant");
+            // getAssetLoader().loadModel("assets/models/desert.glb", "terrain");
+            // getAssetLoader().loadModel("assets/models/human.glb", "human");
              getAssetLoader().loadModel("assets/models/smiler.glb", "smiler");
              getAssetLoader().loadModel("assets/models/crab/scene.gltf", "crab");
              getAssetLoader().loadModel("assets/models/shark.glb", "real_shark");

@@ -64,10 +64,11 @@ public class GameObject {
 
     public class Transform {
         private float x, y, z;
+        private float pivX, pivY, pivZ;
         private float pitch, yaw, roll;
         private float width = 1, height = 1, depth = 1;
         private final Quaternionf rotation = new Quaternionf();
-        public enum TransformEvent {ROTATION_CHANGE, POSITION_CHANGE, SCALE_CHANGE};
+        public enum TransformEvent {ROTATION_CHANGE, POSITION_CHANGE, SCALE_CHANGE, PIVOT_CHANGE};
         private List<Consumer<TransformEvent[]>> listeners = new ArrayList<>();
         private boolean dirty = true;
         private long worldVersion = 0;
@@ -118,8 +119,28 @@ public class GameObject {
         public Quaternionf getRotationQuat() { return rotation; }
         public Vector3f getRotationEuler() {return new Vector3f(pitch, yaw, roll);}
         public Vector4f getRotation() {return new Vector4f(rotation.x, rotation.y, rotation.z, rotation.w);}
+        public float getPivotX() {return pivX;}
+        public float getPivotY() {return pivY;}
+        public float getPivotZ() {return pivZ;}
+        public Vector3f getPivotPoint() {return new Vector3f(pivX, pivY, pivZ);}
 
+        public void setPivotPoint(Vector3f piv) {setPivotPoint(piv.x, piv.y, piv.z, true);}
+        public void setPivotPoint(Vector3f piv, boolean keepTransform) {setPivotPoint(piv.x, piv.y, piv.z, keepTransform);}
 
+        public void setPivotPoint(float px, float py, float pz, boolean keepTransform) {
+            if (keepTransform) {
+                Vector3f delta = new Vector3f(px - pivX, py - pivY, pz - pivZ);
+                delta.mul(width, height, depth);
+                rotation.transform(delta);
+                this.x += delta.x;
+                this.y += delta.y;
+                this.z += delta.z;
+            }
+            this.pivX = px;
+            this.pivY = py;
+            this.pivZ = pz;
+            markDirty(TransformEvent.PIVOT_CHANGE);
+        }
 
         public void position(float x, float y, float z) {
             this.x = x; this.y = y; this.z = z;
@@ -190,7 +211,8 @@ public class GameObject {
                 Matrix4f local = new Matrix4f()
                         .translate(x, y, z)
                         .rotate(rotation)
-                        .scale(width, height, depth);
+                        .scale(width, height, depth)
+                        .translate(-pivX, -pivY, -pivZ);
 
                 if (parent != null) {
                     parent.transform.calculateWorldMatrix().mul(local, cachedWorldMatrix);
@@ -221,6 +243,7 @@ public class GameObject {
                 invParentWorld.mul(worldMatrix, localMatrix);
             }
 
+            localMatrix.translate(pivX, pivY, pivZ);
             Vector3f position = new Vector3f();
             Vector3f scale = new Vector3f();
             localMatrix.getTranslation(position);
@@ -362,5 +385,45 @@ public class GameObject {
 
         return copy;
     }
+
+    public static List<GameObject> flatten(GameObject root) {
+        List<GameObject> out = new ArrayList<>();
+        root.cascade(out::add);
+        return out;
+    }
+
+    public static boolean isInTree(GameObject ancestor, GameObject node) {
+        GameObject current = node;
+        while (current != null) {
+            if (current == ancestor) return true;
+            current = current.parent;
+        }
+        return false;
+    }
+
+    public static boolean canAdopt(GameObject child, GameObject parent) {
+        if (child == null) return false;
+        if (child == parent || child.parent == parent) return false;
+        return !isInTree(child, parent);
+    }
+
+
+
+    public static void adopt(GameObject child, GameObject newParent) {
+        Scene scene = child.getEngine().getSceneManager().getActiveScene();
+        Matrix4f world = child.transform.calculateWorldMatrix();
+        if (child.parent != null) {
+            child.parent.children.remove(child);
+            child.parent = null;
+        } else {
+            scene.removeObject(child.id);
+        }
+        if (newParent != null) newParent.addChild(child);
+        else scene.addObject(child);
+        child.transform.applyWorldMatrix(world);
+    }
+
+
+
 
 }
