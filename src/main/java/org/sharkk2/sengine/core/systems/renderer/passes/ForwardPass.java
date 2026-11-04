@@ -4,6 +4,10 @@ import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.DrawMode;
+import org.sharkk2.sengine.core.classes.enums.RenderMethod;
+import org.sharkk2.sengine.core.classes.enums.RenderMode;
+import org.sharkk2.sengine.core.classes.enums.TextureSlot;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 import org.sharkk2.sengine.core.systems.renderer.FrameContext;
@@ -35,9 +39,9 @@ public class ForwardPass extends RenderPass {
         depthShader.setInt("uAlphaCutout", model.material.alphaCutout ? 1 : 0);
         depthShader.setInt("uInstanced", 0);
         int unit = 0;
-        unit = engine.getRenderer().bindTexture2D(depthShader, Renderer.TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(depthShader, Renderer.TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
-        engine.getRenderer().bindTexture2D(depthShader, Renderer.TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(depthShader, TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(depthShader, TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
+        engine.getRenderer().bindTexture2D(depthShader, TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
         int boffset = ctx.animationBoneOffsets.get(model);
         if (boffset >= 0) {
             depthShader.setInt("uSkinned", 1);
@@ -45,13 +49,13 @@ public class ForwardPass extends RenderPass {
         } else {
             depthShader.setInt("uSkinned", 0);
         }
-        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+        glDrawElements(model.getDrawMode() == DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
 
     @Override
     protected void onPass(FrameContext frameContext) {
-        if (engine.getRenderer().getRenderingMode().equals(Renderer.RenderMode.MODE_DEFERRED_ONLY)) {
+        if (engine.getRenderer().getRenderingMode().equals(RenderMode.MODE_DEFERRED_ONLY)) {
             return;
         }
         glDisable(GL_STENCIL_TEST); // because we didn't care about forward stuff earlier, the stencil would just reject them, plus we dont even need it
@@ -84,9 +88,13 @@ public class ForwardPass extends RenderPass {
         objectShader.setInt("dlEnabled", gsl.enabled ? 1 : 0);
         objectShader.setFloat("dlNormalShadowBias", gsl.shadowNormalBias);
         objectShader.setInt("globalShadowEnabled", gsl.castShadow ? 1 : 0);
-        objectShader.setMat4("globalLightSpaceMatrix", gsl.calcLightSpace(engine));
+        for (int i = 0; i < gsl.shadowMap.layers; i++) {
+            objectShader.setMat4("gsCascadeMatrices[" + i + "]", gsl.shadowMap.matrices[i]);
+            objectShader.setFloat("gsCascadeSplits[" + i + "]", gsl.shadowMap.splits[i]);
+            objectShader.setFloat("gsCascadeTexel[" + i + "]", gsl.shadowMap.texelSizes[i]);
+        }
         glActiveTexture(GL_TEXTURE30);
-        glBindTexture(GL_TEXTURE_2D, gsl.shadowMap.depthTexture);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, gsl.shadowMap.depthTexture);
         objectShader.setInt("globalShadowTex", 30);
 
         if (!frameContext.opaqueForwardModels.isEmpty() || !frameContext.transparentForwardModels.isEmpty()) {
@@ -131,18 +139,18 @@ public class ForwardPass extends RenderPass {
         boolean isPacked = (model.material.getRoughnessTexture() == model.material.getMetalnessTexture()) && (model.material.getRoughnessTexture() != -1);
         objectShader.setInt("isPackedORM", isPacked ? 1 : 0);
         int unit = 0;
-        unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
         if (isPacked) {
-            unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.ROUGHNESS, model.material.getMetalnessTexture(), unit);
+            unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.ROUGHNESS, model.material.getMetalnessTexture(), unit);
         } else {
-            unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.ROUGHNESS, model.material.getRoughnessTexture(), unit);
-            unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.METALNESS, model.material.getMetalnessTexture(), unit);
+            unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.ROUGHNESS, model.material.getRoughnessTexture(), unit);
+            unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.METALNESS, model.material.getMetalnessTexture(), unit);
         }
-        unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.NORMAL, model.material.getNormalTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.EMISSIVE, model.material.getEmissiveTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.AO, model.material.getAoTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
-        engine.getRenderer().bindTexture2D(objectShader, Renderer.TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.NORMAL, model.material.getNormalTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.EMISSIVE, model.material.getEmissiveTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.AO, model.material.getAoTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(objectShader,TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
+        engine.getRenderer().bindTexture2D(objectShader,TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
         int boffset = ctx.animationBoneOffsets.get(model);
         if (boffset >= 0) {
             objectShader.setInt("uSkinned", 1);
@@ -152,11 +160,11 @@ public class ForwardPass extends RenderPass {
         }
 
         boolean disabled = false;
-        if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_NO_DEPTH) {
+        if (model.getRenderMethod() == RenderMethod.RENDER_NO_DEPTH) {
             glDisable(GL_DEPTH_TEST);
             disabled =true;
         }
-        glDrawElements(model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
+        glDrawElements(model.getDrawMode() == DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES:GL_LINES, model.indexCount, GL_UNSIGNED_INT, 0);
         if (disabled) glEnable(GL_DEPTH_TEST);
 
         glBindVertexArray(0);

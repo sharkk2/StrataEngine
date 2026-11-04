@@ -7,6 +7,7 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.*;
 import org.sharkk2.sengine.core.classes.exceptions.FrameBufferException;
 import org.sharkk2.sengine.core.classes.exceptions.RendererException;
 import org.sharkk2.sengine.core.systems.ShaderService;
@@ -28,31 +29,6 @@ import static org.lwjgl.opengl.GL43.*;
 // fixme: Implement batching or instancing to reduce draw calls, and LoD for shaders "can help with bug 1" and very early depth pass to reduce the impact on forwarded objects
 
 public class Renderer {
-    public enum RenderMode {MODE_ALL, MODE_BASECOLOR, MODE_METALNESS, MODE_ROUGHNESS, MODE_NORMALS, MODE_EMISSIVE, MODE_AO, MODE_OPACITY, MODE_DEFERRED_ONLY, MODE_MAX}
-    public enum RenderMethod {RENDER_DEFERRED, RENDER_FORWARD, RENDER_SKIP, RENDER_NO_DEPTH}
-    public enum AntiAliasingMode {NONE, FXAA, SMAA}
-    public enum DrawMode {TRIANGLES, LINES}
-
-    public enum TextureSlot {
-        ALBEDO("useAlbedoTex", "albedoTex"),
-        ROUGHNESS("useRoughnessTex", "roughnessTex"),
-        METALNESS("useMetalnessTex", "metalnessTex"),
-        NORMAL("useNormalTex", "normalTex"),
-        EMISSIVE("useEmissiveTex", "emissiveTex"),
-        AO("useAoTex", "aoTex"),
-        ALPHA_MASK("useAlphaMaskTex", "alphaMaskTex"),
-        OPACITY("useOpacityTex", "opacityTex");
-
-        public final String useUniform;
-        public final String texUniform;
-
-        TextureSlot(String useUniform, String texUniform) {
-            this.useUniform = useUniform;
-            this.texUniform = texUniform;
-        }
-    }
-
-
     private static final int BONE_SSBO_BINDING = 3;
     private static final int INITIAL_BONE_CAPACITY = 128; // joints
     private static final int LIGHT_STRUCT_BYTES = 160;
@@ -108,7 +84,6 @@ public class Renderer {
     private final List<LightComponent> lights = new ArrayList<>();
     private final List<ModelComponent> models = new ArrayList<>();
     private final List<ModelComponent> eligibleAnimModels = new ArrayList<>();
-    private final Map<String, Batch> batches = new HashMap<>();
 
     private Matrix4f[][] boneSets = new Matrix4f[32][];
 
@@ -133,27 +108,8 @@ public class Renderer {
         registerPass(new ForwardPass(engine), false);
         registerPass(new BloomPass(engine), false);
         registerPass(new PostProcessingPass(engine));
-
-
     }
 
-    public static class Batch {
-        public final List<ModelComponent> models = new ArrayList<>();
-        public final String id;
-        public Batch(String id) {this.id = id;}
-    }
-    // so how this works is quite simple,
-    // when a model component's material textures or vao change, it creates a batch key of those textures + a key of the vao contents, finds or creates a batch with it and joins it.
-    // during rendering, these batches will be passed along in batch lists instead of model component list inside the frame context and instanced, or used directly as containers.
-
-    public Batch createRenderBatch(String id) {
-        Batch batch = new Batch(id);
-        batches.put(id, batch);
-        return batch;
-    }
-
-    public Batch getRenderBatch(String id) {return batches.get(id);}
-    public Batch removeRenderBatch(String id) {return batches.remove(id);}
 
     public void enableWireframe(boolean v) {
         wireframe = v;
@@ -229,6 +185,7 @@ public class Renderer {
         renderPasses.remove(pass);
         sort(renderPasses);
     }
+
 
     private void createFrameBuffer() {
         int width = (int) engine.getValue("res_width");
@@ -338,7 +295,6 @@ public class Renderer {
             if (light.castShadow) frameContext.shadowLights.add(light);
         }
 
-        // todo: have the frameContext carry batch lists with their models checked so passes do not need to manually do this
         eligibleAnimModels.clear();
         ModelComponent cameraSibling = camera.getOwner().getComponent(ModelComponent.class);
         for (ModelComponent model : models) { // you have ALL the model components in the entire game here
@@ -354,7 +310,7 @@ public class Renderer {
                 continue;
             }
             eligibleAnimModels.add(model);
-            if (model.castsShadow() && model.getDrawMode() != Renderer.DrawMode.LINES) frameContext.shadowingModels.add(model);
+            if (model.castsShadow() && model.getDrawMode() != DrawMode.LINES) frameContext.shadowingModels.add(model);
             if (engine.getIO("frustum_culling") && model.frustumCulled && !camera.inFrustum(model.getOwner(), engine.getWindowAspectRatio(), model.bounds.boundingRadius) && !model.getOwner().isDebuggingObject) continue;
             if (model.material.isTransparent()) {
                 frameContext.transparentForwardModels.add(model);
@@ -605,7 +561,7 @@ public class Renderer {
         for (RenderPass p : renderPasses) p.destroy();
     }
 
-    public void resize() {
+    public void reset() {
         glDeleteFramebuffers(framebuffer);
         glDeleteTextures(fbColorTexture);
         glDeleteTextures(fbDepthTexture);
@@ -613,4 +569,20 @@ public class Renderer {
         createFrameBuffer();
         for (RenderPass p : renderPasses) p.reset();
     }
+
+    public void setResolution(int width, int height) {
+        engine.setValue("res_width", (float)Math.max(width, 100));
+        engine.setValue("res_height", (float)Math.max(height, 100));
+        reset();
+    }
+
+    public void setHDR(boolean hdr) {
+        engine.setIO("hdr", hdr);
+        reset();
+    }
+
+    public float getAspectRatio() {
+        return engine.getValue("res_width") / engine.getValue("res_height");
+    }
+
 }

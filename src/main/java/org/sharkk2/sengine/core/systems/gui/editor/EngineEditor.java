@@ -17,6 +17,7 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
+import org.luaj.vm2.LuaError;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.sharkk2.sengine.Engine;
@@ -25,7 +26,8 @@ import org.sharkk2.sengine.core.Helpers;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
-import org.sharkk2.sengine.core.classes.animation.Animation;
+import org.sharkk2.sengine.core.classes.Animation;
+import org.sharkk2.sengine.core.classes.enums.*;
 import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.RaycastService;
 import org.sharkk2.sengine.core.systems.components.*;
@@ -34,6 +36,7 @@ import org.sharkk2.sengine.core.systems.gui.editor.commands.LifecycleCommand;
 import org.sharkk2.sengine.core.systems.gui.editor.commands.RenameCommand;
 import org.sharkk2.sengine.core.systems.gui.editor.commands.ReparentCommand;
 import org.sharkk2.sengine.core.systems.gui.editor.commands.TransformCommand;
+import org.sharkk2.sengine.core.systems.lua.LuaScript;
 import org.sharkk2.sengine.core.systems.renderer.RenderPass;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
@@ -44,6 +47,8 @@ import static org.lwjgl.opengl.GL43.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -117,18 +122,20 @@ public class EngineEditor {
 
     private final ImString treeFilter = new ImString(128);
     private final Set<GameObject> hiddenObjects = new HashSet<>();
-    private final Map<ModelComponent, Renderer.RenderMethod> hiddenModels = new IdentityHashMap<>();
+    private final Map<ModelComponent, RenderMethod> hiddenModels = new IdentityHashMap<>();
 
     private final ImBoolean showScene = new ImBoolean(true);
     private final ImBoolean showProfiler = new ImBoolean(true);
     private final ImBoolean showInspector = new ImBoolean(true);
     private final ImBoolean showConsole = new ImBoolean(true);
+    private final ImBoolean showRSettings = new ImBoolean(false);
 
     private final ImBoolean consoleInfo = new ImBoolean(true);
     private final ImBoolean consoleWarn = new ImBoolean(true);
     private final ImBoolean consoleError = new ImBoolean(true);
     private final ImBoolean consoleAutoScroll = new ImBoolean(true);
     private final ImString consoleFilter = new ImString(128);
+    private final ImString consoleInput = new ImString(1024);
     private List<Logger.Entry> consoleEntries = new ArrayList<>();
     private long lastConsoleRevision = -1;
 
@@ -166,11 +173,11 @@ public class EngineEditor {
 
         imGuiGlfw.init(engine.getWindowHandle(), true);
         imGuiGl3.init("#version 150 core");
-        engine.getInputService().setMapping("wireframe", InputService.InputType.KEYBOARD, GLFW_KEY_F1);
-        engine.getInputService().setMapping("changeRenderingMode", InputService.InputType.KEYBOARD, GLFW_KEY_F2);
-        engine.getInputService().setMapping("toggleSSAO", InputService.InputType.KEYBOARD, GLFW_KEY_F3);
-        engine.getInputService().setMapping("toggleMouse", InputService.InputType.KEYBOARD, GLFW_KEY_F4);
-        engine.getInputService().setMapping("toggleGUI", InputService.InputType.KEYBOARD, GLFW_KEY_F9);
+        engine.getInputService().setMapping("wireframe", InputType.KEYBOARD, GLFW_KEY_F1);
+        engine.getInputService().setMapping("changeRenderingMode", InputType.KEYBOARD, GLFW_KEY_F2);
+        engine.getInputService().setMapping("toggleSSAO", InputType.KEYBOARD, GLFW_KEY_F3);
+        engine.getInputService().setMapping("toggleMouse", InputType.KEYBOARD, GLFW_KEY_F4);
+        engine.getInputService().setMapping("toggleGUI", InputType.KEYBOARD, GLFW_KEY_F9);
 
         defaultValueConfig.putAll(new TreeMap<>(engine.valueConfig));
         applyEditorStyle();
@@ -285,9 +292,10 @@ public class EngineEditor {
             filters.put(stack.UTF8("*.png"));
             filters.flip();
 
+            String filename = "screenshot_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".png";
             String path = TinyFileDialogs.tinyfd_saveFileDialog(
                     "Save Screenshot",
-                    "sengine_screenshot.png",
+                    filename,
                     filters,
                     "PNG Image"
             );
@@ -322,6 +330,7 @@ public class EngineEditor {
         renderViewportWindow();
         renderObjectMenu(selectedObject);
         renderConsole();
+        renderRendererSettings();
 
         ImDrawList fgDrawList = ImGui.getForegroundDrawList();
         ImGuizmo.setDrawList(fgDrawList);
@@ -437,9 +446,7 @@ public class EngineEditor {
                 if (ImGui.menuItem("Screenshot", "Ctrl+F11")) {
                     saveScreenshot();
                 }
-                if (ImGui.menuItem("Instancing", "", engine.getIO("instancing"))) {
-                    engine.setIO("instancing", !engine.getIO("instancing"));
-                }
+
                 ImGui.endMenu();
             }
             if (ImGui.beginMenu("Window")) {
@@ -447,6 +454,7 @@ public class EngineEditor {
                 ImGui.menuItem("FPS Profiler", "", showProfiler);
                 ImGui.menuItem("Inspector", "", showInspector);
                 ImGui.menuItem("Console", "", showConsole);
+                ImGui.menuItem("Renderer", "", showRSettings);
                 ImGui.endMenu();
             }
             String stats = engine.getFps() + " FPS";
@@ -455,6 +463,7 @@ public class EngineEditor {
             ImGui.endMainMenuBar();
         }
     }
+
 
     private void tickGUI() {
         InputService input = engine.getInputService();
@@ -548,8 +557,8 @@ public class EngineEditor {
         if (input.isKeyPressed(input.getMapping("wireframe").code())) {renderer.enableWireframe(!renderer.wireframeEnabled());}
         if (input.isKeyPressed(input.getMapping("changeRenderingMode").code())) {
             int next = renderer.getRenderingMode().ordinal() + 1;
-            if (next >= Renderer.RenderMode.MODE_MAX.ordinal()) next = 0;
-            renderer.setRenderingMode(Renderer.RenderMode.values()[next]);
+            if (next >= RenderMode.MODE_MAX.ordinal()) next = 0;
+            renderer.setRenderingMode(RenderMode.values()[next]);
         }
 
         if (input.isKeyPressed(input.getMapping("toggleSSAO").code())) {
@@ -715,10 +724,10 @@ public class EngineEditor {
             if (hide) {
                 if (!hiddenModels.containsKey(mc)) {
                     hiddenModels.put(mc, mc.getRenderMethod());
-                    mc.setRenderMethod(Renderer.RenderMethod.RENDER_SKIP);
+                    mc.setRenderMethod(RenderMethod.RENDER_SKIP);
                 }
             } else {
-                Renderer.RenderMethod previous = hiddenModels.remove(mc);
+                RenderMethod previous = hiddenModels.remove(mc);
                 if (previous != null) mc.setRenderMethod(previous);
             }
         });
@@ -759,7 +768,7 @@ public class EngineEditor {
         String filter = consoleFilter.get().trim().toLowerCase();
         StringBuilder copyBuffer = copyAll ? new StringBuilder() : null;
 
-        ImGui.beginChild("ConsoleScroll", 0, 0, false, ImGuiWindowFlags.HorizontalScrollbar);
+        ImGui.beginChild("ConsoleScroll", 0, -ImGui.getFrameHeightWithSpacing(), false, ImGuiWindowFlags.HorizontalScrollbar);
         for (Logger.Entry e : consoleEntries) {
             boolean levelOk = switch (e.level()) {
                 case INFO -> consoleInfo.get();
@@ -779,6 +788,29 @@ public class EngineEditor {
         }
         if (fresh && consoleAutoScroll.get()) ImGui.setScrollHereY(1f);
         ImGui.endChild();
+
+        ImGui.setNextItemWidth(-70);
+        boolean enter = ImGui.inputTextWithHint("##consoleInput", "Input lua code", consoleInput, ImGuiInputTextFlags.EnterReturnsTrue);
+        ImGui.sameLine();
+        boolean execute = ImGui.button("Execute");
+        if ((enter&&!engine.getInputService().isKeyDown(GLFW_KEY_LEFT_SHIFT)) || execute) {
+            String code = consoleInput.get().trim();
+            if (!code.isEmpty()) {
+                try {
+                    LuaScript script = new LuaScript(code, "editor_console_script", "");
+                    script.passObject(engine, "engine");
+                    engine.getScriptService().execute(script.newInstance());
+                    Logger.info("Executed the inputted script");
+
+                } catch (LuaError e) {
+                    Logger.error("Failed to execute: " + e.getMessage());
+                }
+                if (!engine.getInputService().isKeyDown(GLFW_KEY_RIGHT_SHIFT)) consoleInput.set("");
+                ImGui.setKeyboardFocusHere(-1);
+            }
+        }
+
+        if (copyBuffer != null) ImGui.setClipboardText(copyBuffer.toString());
 
         if (copyBuffer != null) ImGui.setClipboardText(copyBuffer.toString());
         ImGui.end();
@@ -920,9 +952,6 @@ public class EngineEditor {
         if (toolButton("Scale", manipulationMode == Operation.SCALE)) manipulationMode = Operation.SCALE;
         if (ImGui.isItemHovered()) ImGui.setTooltip("Scale (B)");
         ImGui.sameLine();
-        if (toolButton(localSpace ? "Local" : "World", false)) localSpace = !localSpace;
-        if (ImGui.isItemHovered()) ImGui.setTooltip("Gizmo space");
-        ImGui.sameLine();
         if (toolButton("Snap", snapEnabled)) snapEnabled = !snapEnabled;
         if (ImGui.isItemHovered()) ImGui.setTooltip("Snapping (hold Ctrl to toggle temporarily)");
         ImGui.sameLine();
@@ -933,6 +962,7 @@ public class EngineEditor {
         ImGui.sameLine();
         if (ImGui.button("Focus")) focusSelected();
         if (ImGui.isItemHovered()) ImGui.setTooltip("Look at selected object (F)");
+        ImGui.sameLine();
 
         float btnWidth = ImGui.getFrameHeight(); // square button, height == width
         ImGui.sameLine(ImGui.getWindowWidth() - btnWidth - ImGui.getStyle().getWindowPaddingX());
@@ -1257,7 +1287,7 @@ public class EngineEditor {
         }
 
         float[] bvalue = new float[]{environ.globalLight.shadowNormalBias};
-        if (ImGui.dragFloat("Shadow normal Bias", bvalue, 0.001f, 0f, 1f)) {
+        if (ImGui.dragFloat("Shadow normal Bias", bvalue, 0.001f, 0f, 3f)) {
             environ.globalLight.shadowNormalBias = bvalue[0];
         }
 
@@ -1276,15 +1306,15 @@ public class EngineEditor {
 
         ImGui.text("Fog mode:");
         ImGui.sameLine();
-        if (ImGui.radioButton("Linear", fog.mode == Scene.Fog.FogMode.LINEAR)) {
-            fog.mode = Scene.Fog.FogMode.LINEAR;
+        if (ImGui.radioButton("Linear", fog.mode == FogMode.LINEAR)) {
+            fog.mode = FogMode.LINEAR;
         }
         ImGui.sameLine();
-        if (ImGui.radioButton("Quadratic", fog.mode == Scene.Fog.FogMode.QUADRATIC)) {
-            fog.mode = Scene.Fog.FogMode.QUADRATIC;
+        if (ImGui.radioButton("Quadratic", fog.mode == FogMode.QUADRATIC)) {
+            fog.mode = FogMode.QUADRATIC;
         }
 
-        boolean isQuadratic = fog.mode == Scene.Fog.FogMode.QUADRATIC;
+        boolean isQuadratic = fog.mode == FogMode.QUADRATIC;
 
         fogColor[0] = fog.color.x;
         fogColor[1] = fog.color.y;
@@ -1316,7 +1346,7 @@ public class EngineEditor {
 
         Scene.Sky sky = scene.environment.sky;
         ImGui.text("Skybox mode: " + sky.getMode().name());
-        boolean procedural = sky.getMode() == Scene.Sky.SkyMode.PROCEDURAL;
+        boolean procedural = sky.getMode() == SkyMode.PROCEDURAL;
 
         skyEnabled.set(sky.enabled);
         if (ImGui.checkbox("Sky enabled", skyEnabled)) {
@@ -1351,20 +1381,20 @@ public class EngineEditor {
 
         ImGui.text("Weather:");
         ImGui.sameLine();
-        if (ImGui.radioButton("Clear", sky.weather == Scene.Sky.SkyWeather.CLEAR)) {
-            sky.weather = Scene.Sky.SkyWeather.CLEAR;
+        if (ImGui.radioButton("Clear", sky.weather == SkyWeather.CLEAR)) {
+            sky.weather = SkyWeather.CLEAR;
         }
         ImGui.sameLine();
-        if (ImGui.radioButton("Partly cloudy", sky.weather == Scene.Sky.SkyWeather.PARTLY_CLOUDY)) {
-            sky.weather = Scene.Sky.SkyWeather.PARTLY_CLOUDY;
+        if (ImGui.radioButton("Partly cloudy", sky.weather == SkyWeather.PARTLY_CLOUDY)) {
+            sky.weather = SkyWeather.PARTLY_CLOUDY;
         }
         ImGui.sameLine();
-        if (ImGui.radioButton("Cloudy", sky.weather == Scene.Sky.SkyWeather.CLOUDY)) {
-            sky.weather = Scene.Sky.SkyWeather.CLOUDY;
+        if (ImGui.radioButton("Cloudy", sky.weather == SkyWeather.CLOUDY)) {
+            sky.weather = SkyWeather.CLOUDY;
         }
         ImGui.sameLine();
-        if (ImGui.radioButton("Overcast", sky.weather == Scene.Sky.SkyWeather.OVERCAST)) {
-            sky.weather = Scene.Sky.SkyWeather.OVERCAST;
+        if (ImGui.radioButton("Overcast", sky.weather == SkyWeather.OVERCAST)) {
+            sky.weather = SkyWeather.OVERCAST;
         }
 
         ImGui.text("Sun direction");
@@ -1422,7 +1452,10 @@ public class EngineEditor {
         float dayFactor = Math.clamp(sunFactor + moonFactor, 0.025f, 1f);
 
         scene.environment.globalLight.ambient.set(0.1f, 0.1f, 0.15f).mul(dayFactor);
-        scene.environment.globalLight.intensity = 0.6f + dayFactor * 1.3f;
+        float sunStrength = blend * Math.max(0.25f, sunFactor);
+        float moonStrength = (1f - blend) * Math.max(0.25f, Math.max(0f, moonElevation));
+
+        scene.environment.globalLight.intensity = 10f * sunStrength + 1 * moonStrength;
     }
 
     private float smoothstep(float edge0, float edge1, float x) {
@@ -1813,17 +1846,17 @@ public class EngineEditor {
                 if (renderPositionField("camOffset", offset)) {
                     camComp.setPositionOffset(offset);
                 }
-                float[] fov = {camComp.getFov()};
+                float[] fov = {camComp.fov};
                 if (ImGui.dragFloat("FOV", fov, 0.5f, 1f, 179f)) {
-                    camComp.setFov(fov[0]);
+                    camComp.fov = fov[0];
                 }
-                float[] near = {camComp.getNear()};
-                if (ImGui.dragFloat("Near", near, 0.01f, 0.001f, camComp.getFar())) {
-                    camComp.setNear(near[0]);
+                float[] near = {camComp.near};
+                if (ImGui.dragFloat("Near", near, 0.01f, 0.001f, camComp.far)) {
+                    camComp.near = near[0];
                 }
-                float[] far = {camComp.getFar()};
-                if (ImGui.dragFloat("Far", far, 1f, camComp.getNear(), 100000f)) {
-                    camComp.setFar(far[0]);
+                float[] far = {camComp.far};
+                if (ImGui.dragFloat("Far", far, 1f, camComp.near, 100000f)) {
+                    camComp.far = far[0];
                 }
                 ImGui.spacing();
                 ImGui.text("Orientation");
@@ -1871,7 +1904,7 @@ public class EngineEditor {
                             camComp.getEyePosition(),
                             camComp.getDirection(),
                             engine.getComponentRegistry().getComponents(ModelComponent.class),
-                            camComp.getFar(),
+                            camComp.far,
                             true
                     );
                     if (hit != null) {
@@ -1881,9 +1914,9 @@ public class EngineEditor {
                 }
                 ImGui.endDisabled();
                 ImGui.separator();
-                float[] vignette = {camComp.getVignette()};
+                float[] vignette = {camComp.vignette};
                 if (ImGui.dragFloat("Vignette", vignette, 0.01f, 0f, 1)) {
-                    camComp.setVignette(vignette[0]);
+                    camComp.vignette = vignette[0];
                 }
                 ImGui.separator();
                 if (ImGui.button("Set as primary")) {
@@ -1901,36 +1934,36 @@ public class EngineEditor {
                 }
                 ImGui.text("Draw mode:");
                 ImGui.sameLine();
-                if (ImGui.radioButton("Triangles", modelComp.getDrawMode() == Renderer.DrawMode.TRIANGLES)) {
-                    modelComp.setDrawMode(Renderer.DrawMode.TRIANGLES);
+                if (ImGui.radioButton("Triangles", modelComp.getDrawMode() == DrawMode.TRIANGLES)) {
+                    modelComp.setDrawMode(DrawMode.TRIANGLES);
                 }
                 ImGui.sameLine();
-                if (ImGui.radioButton("Lines", modelComp.getDrawMode() == Renderer.DrawMode.LINES)) {
-                    modelComp.setDrawMode(Renderer.DrawMode.LINES);
+                if (ImGui.radioButton("Lines", modelComp.getDrawMode() == DrawMode.LINES)) {
+                    modelComp.setDrawMode(DrawMode.LINES);
                 }
                 ImGui.text("Render method:");
                 ImGui.sameLine();
-                if (ImGui.radioButton("Deferred", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_DEFERRED)) {
-                    modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_DEFERRED);
+                if (ImGui.radioButton("Deferred", modelComp.getRenderMethod() == RenderMethod.RENDER_DEFERRED)) {
+                    modelComp.setRenderMethod(RenderMethod.RENDER_DEFERRED);
                 }
                 ImGui.sameLine();
-                if (ImGui.radioButton("Forward", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_FORWARD)) {
-                    modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_FORWARD);
+                if (ImGui.radioButton("Forward", modelComp.getRenderMethod() == RenderMethod.RENDER_FORWARD)) {
+                    modelComp.setRenderMethod(RenderMethod.RENDER_FORWARD);
                 }
                 ImGui.sameLine();
-                if (ImGui.radioButton("No Depth", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_NO_DEPTH)) {
-                    modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_NO_DEPTH);
+                if (ImGui.radioButton("No Depth", modelComp.getRenderMethod() == RenderMethod.RENDER_NO_DEPTH)) {
+                    modelComp.setRenderMethod(RenderMethod.RENDER_NO_DEPTH);
                 }
                 ImGui.sameLine();
-                if (ImGui.radioButton("Skip", modelComp.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP)) {
-                    modelComp.setRenderMethod(Renderer.RenderMethod.RENDER_SKIP);
+                if (ImGui.radioButton("Skip", modelComp.getRenderMethod() == RenderMethod.RENDER_SKIP)) {
+                    modelComp.setRenderMethod(RenderMethod.RENDER_SKIP);
                 }
 
                 ImGui.separator();
                 ImGui.text("Material");
                 ModelComponent.Material mat = modelComp.material;
                 ImBoolean matEnabled = new ImBoolean(mat.enabled);
-                ImGui.beginDisabled(modelComp.getRenderMethod() != Renderer.RenderMethod.RENDER_FORWARD);
+                ImGui.beginDisabled(modelComp.getRenderMethod() != RenderMethod.RENDER_FORWARD);
                 if (ImGui.checkbox("Material enabled", matEnabled)) {
                     mat.enabled = matEnabled.get();
                 }
@@ -1970,15 +2003,7 @@ public class EngineEditor {
                 }
 
                 ImGui.endDisabled();
-                ImGui.separator();
-                ImBoolean batched = new ImBoolean(!modelComp.batchID.isEmpty());
-                if (ImGui.checkbox("Batch model", batched)) {
-                    boolean state = batched.get();
-                    if (state) modelComp.batch();
-                    else modelComp.unbatch();
-                }
-                ImGui.sameLine();
-                textDim("ID: " + (batched.get()?modelComp.batchID:"nil"));
+                textDim("ID: " + modelComp.getBatchID());
                 ImGui.spacing();
                 ImGui.text("Textures");
                 textDim("Albedo: " + mat.getAlbedoTexture());
@@ -2083,13 +2108,13 @@ public class EngineEditor {
                 textDim("Script editor is in development*");
             } case AnimationComponent animComp -> {
                 Animation currentAnimation = animComp.getCurrentAnimation();
-                String animName = (currentAnimation != null) ? currentAnimation.name : null;
+                String animName = (currentAnimation != null) ? currentAnimation.name() : null;
 
                 if (currentAnimation != null) {
-                    ImGui.text("Current animation: " + currentAnimation.name);
-                    ImGui.text(String.format("Duration: %.2f", currentAnimation.duration));
+                    ImGui.text("Current animation: " + currentAnimation.name());
+                    ImGui.text(String.format("Duration: %.2f", currentAnimation.duration()));
                     ImGui.sameLine();
-                    textDim("Keyframes: " + currentAnimation.keyframes.size());
+                    textDim("Keyframes: " + currentAnimation.keyframes().size());
                 } else {
                     ImGui.text("No animation selected");
                 }
@@ -2110,8 +2135,8 @@ public class EngineEditor {
 
                 if (currentAnimation != null) {
                     float[] ctime = {animComp.getTime()};
-                    textDim(String.format("Time: %.2f / %.2f", ctime[0], currentAnimation.duration));
-                    if (ImGui.sliderFloat("Seek", ctime, 0, currentAnimation.duration)) {
+                    textDim(String.format("Time: %.2f / %.2f", ctime[0], currentAnimation.duration()));
+                    if (ImGui.sliderFloat("Seek", ctime, 0, currentAnimation.duration())) {
                         animComp.seek(ctime[0]);
                     }
 
@@ -2141,12 +2166,12 @@ public class EngineEditor {
                 }
             } case AudioComponent audioComp -> {
                 ImGui.text("Audio type");
-                if (ImGui.radioButton("Point audio", audioComp.type == AudioComponent.AudioType.POINT_AUDIO)) {
-                    audioComp.type = AudioComponent.AudioType.POINT_AUDIO;
+                if (ImGui.radioButton("Point audio", audioComp.type == AudioType.POINT_AUDIO)) {
+                    audioComp.type = AudioType.POINT_AUDIO;
                 }
                 ImGui.sameLine();
-                if (ImGui.radioButton("Directed audio", audioComp.type == AudioComponent.AudioType.DIRECTED_AUDIO)) {
-                    audioComp.type = AudioComponent.AudioType.DIRECTED_AUDIO;
+                if (ImGui.radioButton("Directed audio", audioComp.type ==AudioType.DIRECTED_AUDIO)) {
+                    audioComp.type =AudioType.DIRECTED_AUDIO;
                 }
 
                 ImGui.separator();
@@ -2202,7 +2227,7 @@ public class EngineEditor {
                     audioComp.fadeRate = fadeRate[0];
                 }
 
-                ImGui.beginDisabled(audioComp.type == AudioComponent.AudioType.POINT_AUDIO);
+                ImGui.beginDisabled(audioComp.type == AudioType.POINT_AUDIO);
                 ImGui.separator();
                 ImGui.text("Cone");
                 float[] innerCone = {audioComp.innerConeAngle};
@@ -2235,13 +2260,76 @@ public class EngineEditor {
         }
     }
 
+    private void rsettingCheckbox(String name, String engineKey, Runnable r) {
+        ImBoolean value = new ImBoolean(engine.getIO(engineKey));
+        if (ImGui.checkbox(name, value)) {
+            engine.setIO(engineKey, value.get());
+            if (r != null) r.run();
+        }
+    }
+
+    private void rsettingCheckbox(String name, String enginekey) {rsettingCheckbox(name, enginekey, null);}
+
+    private void rsettingValue(String name, String engineKey, float min, float max, Runnable r) {
+        float[] value = {engine.getValue(engineKey)};
+        if (ImGui.dragFloat(name, value, 0.01f, min, max)) {
+            engine.setValue(engineKey, Math.clamp(value[0], min, max));
+            if (r!=null) r.run();
+        }
+    }
+
+    private void rsettingValue(String name, String engineKey, float min, float max) {rsettingValue(name, engineKey, min, max, null);}
+
+
+    private void renderRendererSettings() {
+        Renderer renderer = engine.getRenderer();
+        if (!ImGui.begin("Renderer settings", showRSettings)) {
+            ImGui.end();
+            return;
+        }
+
+        ImGui.text("Window & Resolution");
+        rsettingCheckbox("VSync", "vsync");
+
+        rsettingValue("Framebuffer Width", "res_width", 100, 9999, ()->engine.getRenderer().reset());
+        rsettingValue("Framebuffer Height", "res_height", 100, 9999, ()->engine.getRenderer().reset());
+
+        ImGui.separator();
+
+        ImGui.text("Geometry");
+        rsettingCheckbox("Instanced rendering", "instancing");
+        rsettingCheckbox("Frustum culling", "frustum_culling");
+
+        ImGui.separator();
+        ImGui.text("Graphics");
+        rsettingCheckbox("Shadows", "shadows");
+        // change this to a dropdown later
+        rsettingValue("Shadow quality (0-2)", "shadows.quality", 0, 2);
+        rsettingValue("Shadow distance", "shadows.distance", 0, 9999);
+        rsettingCheckbox("SSAO", "ssao");
+        rsettingValue("SSAO Samples", "ssao_samples", 1, 100);
+        rsettingCheckbox("Bloom", "bloom");
+        rsettingCheckbox("Light shafts", "light_shafts");
+        rsettingValue("Lens-dirt Intensity", "lens_dirt.intensity", 0, 100);
+
+        ImGui.separator();
+        ImGui.text("Colors & Composition");
+        rsettingCheckbox("HDR", "hdr", ()->engine.getRenderer().reset());
+        rsettingCheckbox("Gamma correction", "gamma_correct");
+        rsettingCheckbox("Color-grading texture", "color_grading");
+        rsettingCheckbox("ACES Tone-mapping", "apply_aces");
+        rsettingValue("Gamma", "gamma", 0, 10);
+        rsettingValue("Saturation", "saturation", 0,10);
+        ImGui.end();
+    }
+
 
 
     private void renderDebugOverlay() {
         int flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.NoMove;
 
         ImGui.setNextWindowBgAlpha(0.55f);
-        ImGui.setNextWindowPos(17, 35);
+        ImGui.setNextWindowPos(35, 45);
 
         if (ImGui.begin("##debug_overlay", flags)) {
 
@@ -2262,9 +2350,9 @@ public class EngineEditor {
                 ImGui.text("Primary camera: " + mainCamera.name + " (owned by " + camObject.getName() + "): ");
                 ImGui.text(String.format("XYZ: %.1f, %.1f, %.1f", camObject.transform.getX(), camObject.transform.getY(), camObject.transform.getZ()));
                 ImGui.text(String.format("Orientation (pitch,yaw,roll): %.1f, %.1f, %.1f", mainCamera.getPitch(), mainCamera.getYaw(), mainCamera.getRoll()));
-                ImGui.text(String.format("FOV (degrees): %.2f", mainCamera.getFov()));
+                ImGui.text(String.format("FOV (degrees): %.2f", mainCamera.fov));
                 ImGui.separator();
-                RaycastService.RayHit hit = engine.getRaycastService().castRay(mainCamera.getEyePosition(), mainCamera.getDirection(), engine.getComponentRegistry().getComponents(ModelComponent.class) ,mainCamera.getFar(), true);
+                RaycastService.RayHit hit = engine.getRaycastService().castRay(mainCamera.getEyePosition(), mainCamera.getDirection(), engine.getComponentRegistry().getComponents(ModelComponent.class) ,mainCamera.far, true);
                 if (hit!=null) {
                     ImGui.text("Looking at: " + hit.hit().getOwner().getRoot().getName());
                 } else {

@@ -8,6 +8,7 @@ import org.lwjgl.system.MemoryUtil;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
+import org.sharkk2.sengine.core.classes.enums.ShaderType;
 import org.sharkk2.sengine.core.classes.exceptions.ShaderLoadException;
 
 import java.nio.ByteBuffer;
@@ -34,23 +35,23 @@ public class ShaderService {
     }
 
     public Shader get(String vertexPath, String fragmentPath) {
-        return getOrLoad(Shader.ShaderType.DRAW, vertexPath, fragmentPath);
+        return getOrLoad(ShaderType.DRAW, vertexPath, fragmentPath);
     }
 
     public Shader getCompute(String computePath) {
-        return getOrLoad(Shader.ShaderType.COMPUTE, computePath);
+        return getOrLoad(ShaderType.COMPUTE, computePath);
     }
 
     public Shader getGeometry(String vertexPath, String geometryPath, String fragmentPath) {
-        return getOrLoad(Shader.ShaderType.GEOMETRY, vertexPath, geometryPath, fragmentPath);
+        return getOrLoad(ShaderType.GEOMETRY, vertexPath, geometryPath, fragmentPath);
     }
 
-    private Shader getOrLoad(Shader.ShaderType type, String... paths) {
+    private Shader getOrLoad(ShaderType type, String... paths) {
         String key = type + "|" + String.join("|", paths);
         return shaders.computeIfAbsent(key, k -> load(type, paths));
     }
 
-    private Shader load(Shader.ShaderType type, String... paths) {
+    private Shader load(ShaderType type, String... paths) {
         int[] stages = switch (type) {
             case DRAW -> new int[] { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
             case COMPUTE -> new int[] { GL_COMPUTE_SHADER };
@@ -308,7 +309,6 @@ public class ShaderService {
         private String fragPath;
         private String computePath;
         private String geometryPath;
-        public enum ShaderType {DRAW, COMPUTE, GEOMETRY}
         public final ShaderType type;
         private final Map<String, Integer> locationCache = new HashMap<>();
         private final Set<String> warned = new HashSet<>();

@@ -5,14 +5,15 @@ import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.Helpers;
+import org.sharkk2.sengine.core.classes.enums.DrawMode;
 import org.sharkk2.sengine.core.systems.lua.LuaScript;
-import org.sharkk2.sengine.core.classes.animation.Animation;
-import org.sharkk2.sengine.core.classes.animation.Joint;
-import org.sharkk2.sengine.core.classes.animation.JointTransform;
-import org.sharkk2.sengine.core.classes.animation.Keyframe;
+import org.sharkk2.sengine.core.classes.Animation;
+import org.sharkk2.sengine.core.classes.Joint;
+import org.sharkk2.sengine.core.classes.JointTransform;
+import org.sharkk2.sengine.core.classes.Keyframe;
 import org.sharkk2.sengine.core.classes.exceptions.AssetNotFoundException;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
-import org.sharkk2.sengine.core.systems.components.ModelComponent.Material.MaterialTexture;
+import org.sharkk2.sengine.core.classes.enums.MaterialTexture;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.assimp.*;
@@ -37,7 +38,6 @@ import static org.lwjgl.stb.STBImage.*;
 
 
 import org.joml.Quaternionf;
-import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import javax.imageio.ImageIO;
 import javax.sound.sampled.AudioFormat;
@@ -855,7 +855,7 @@ public class AssetLoader {
     }
 
 
-    public class Primitives {
+    public static class Primitives {
         public ModelComponent cube() {
             float[] vertices = {
                     -0.5f, -0.5f,  0.5f,
@@ -1125,7 +1125,7 @@ public class AssetLoader {
             };
 
             ModelComponent box = new ModelComponent(vertices, normals, uvs, indices);
-            box.setDrawMode(Renderer.DrawMode.LINES);
+            box.setDrawMode(DrawMode.LINES);
             box.material.enabled = false;
             return box;
         }
@@ -1144,7 +1144,7 @@ public class AssetLoader {
             };
 
             ModelComponent line = new ModelComponent(vertices, normals, uvs, indices);
-            line.setDrawMode(Renderer.DrawMode.LINES);
+            line.setDrawMode(DrawMode.LINES);
             line.material.enabled = false;
             return line;
         }
@@ -1291,7 +1291,7 @@ public class AssetLoader {
                 }
             }
             ModelComponent mc = new ModelComponent(vertices, normals, uvs, indices);
-            mc.setDrawMode(Renderer.DrawMode.LINES);
+            mc.setDrawMode(DrawMode.LINES);
             return mc;
         }
 

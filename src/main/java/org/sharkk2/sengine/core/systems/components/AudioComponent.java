@@ -4,11 +4,11 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
+import org.sharkk2.sengine.core.classes.enums.AudioType;
 import org.sharkk2.sengine.core.systems.AssetLoader;
 
 
 public class AudioComponent extends Component {
-    public enum AudioType {POINT_AUDIO, DIRECTED_AUDIO}
     public final AssetLoader.AudioData audioData;
     public AudioType type = AudioType.POINT_AUDIO;
     public boolean playing = false;

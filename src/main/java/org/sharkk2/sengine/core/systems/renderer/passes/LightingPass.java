@@ -37,9 +37,14 @@ public class LightingPass extends RenderPass {
         lightingShader.setInt("dlEnabled", gsl.enabled ? 1 : 0);
         lightingShader.setFloat("dlNormalShadowBias", gsl.shadowNormalBias);
         lightingShader.setInt("globalShadowEnabled", gsl.castShadow ? 1 : 0);
-        lightingShader.setMat4("globalLightSpaceMatrix", gsl.calcLightSpace(engine));
+        lightingShader.setInt("gsCascadeLayers", gsl.shadowMap.layers);
+        for (int i = 0; i < gsl.shadowMap.layers; i++) {
+            lightingShader.setMat4("gsCascadeMatrices[" + i + "]", gsl.shadowMap.matrices[i]);
+            lightingShader.setFloat("gsCascadeSplits[" + i + "]", gsl.shadowMap.splits[i]);
+            lightingShader.setFloat("gsCascadeTexel[" + i + "]", gsl.shadowMap.texelSizes[i]);
+        }
         glActiveTexture(GL_TEXTURE30);
-        glBindTexture(GL_TEXTURE_2D, gsl.shadowMap.depthTexture);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, gsl.shadowMap.depthTexture);
         lightingShader.setInt("globalShadowTex", 30);
 
         engine.getRenderer().uploadLights(lightingShader, camPos, frameContext.lights);

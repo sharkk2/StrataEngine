@@ -57,14 +57,15 @@ public class PostProcessingPass extends RenderPass {
         glViewport(0, 0, width, height);
         glDisable(GL_DEPTH_TEST);
         glClear(GL_COLOR_BUFFER_BIT);
+        CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
+
         shader.use();
-        shader.setFloat("exposure", engine.getValue("exposure"));
+        shader.setFloat("exposure", cam.exposure);
         shader.setFloat("saturation", engine.getValue("saturation"));
         shader.setFloat("gamma", engine.getValue("gamma"));
         shader.setInt("useHDR", engine.getIO("hdr") ? 1:0);
         shader.setInt("applyACES", engine.getIO("apply_aces") ? 1:0);
         shader.setInt("AAMode", engine.getRenderer().AAMode.ordinal());
-        shader.setFloat("time", (float)glfwGetTime());
         shader.setFloat("bloomStrength", engine.getValue("bloom_strength"));
 
         glActiveTexture(GL_TEXTURE0);
@@ -73,9 +74,6 @@ public class PostProcessingPass extends RenderPass {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, frameContext.defaultDepthTexture);
         shader.setInt("depthTexture", 1);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, frameContext.defaultStencilTexture);
-        shader.setInt("stencilView", 2);
         boolean bloomEnabled = engine.getIO("bloom");
         shader.setInt("useBloom", bloomEnabled ? 1 : 0);
         int bloomTex = frameContext.data.getValueNumber("bloom.bloomTexture").intValue();
@@ -108,15 +106,13 @@ public class PostProcessingPass extends RenderPass {
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D, frameContext.data.getValueNumber("gbuffer.position").intValue());
         shader.setInt("gPosition", 6);
-        shader.setFloat2("screenSize", engine.getValue("res_width"), engine.getValue("res_height"));
         shader.setInt("gammaCorrect", engine.getIO("gamma_correct") ? 1:0);
-        CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
 
         shader.setFloat("focusRange", cam.getFocusRange());
         shader.setFloat("focusNearFalloff", cam.getFocusNearFalloff());
         shader.setFloat("focusFarFalloff", cam.getFocusFarFalloff());
         shader.setFloat("focusDist", cam.getFocusDistance());
-        shader.setFloat("vignette", cam.getVignette());
+        shader.setFloat("vignette", cam.vignette);
         shader.setBoolean("DoFEnabled", cam.depthOfField);
 
         shader.setInt("godraysEnabled", engine.getIO("light_shafts")&& frameContext.scene.environment.globalLight.enabled ? 1:0);

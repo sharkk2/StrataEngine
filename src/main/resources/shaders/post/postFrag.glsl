@@ -8,7 +8,6 @@ uniform sampler2D bloomTexture;
 uniform sampler3D lutTexture;
 uniform sampler2D lensDirtTexture;
 uniform sampler2D gPosition;
-uniform vec2 screenSize;
 uniform float bloomStrength;
 
 uniform float exposure;
@@ -20,7 +19,6 @@ uniform int gammaCorrect;
 uniform int useColorGrading;
 uniform int useBloom;
 uniform int useLensDirt;
-uniform float time;
 uniform int AAMode;
 uniform float lensDirtIntensity;
 uniform float vignette;

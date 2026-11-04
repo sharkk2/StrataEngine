@@ -4,6 +4,9 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.*;
+import org.sharkk2.sengine.core.classes.enums.AudioType;
+import org.sharkk2.sengine.core.classes.enums.InputType;
+import org.sharkk2.sengine.core.classes.enums.SkyWeather;
 import org.sharkk2.sengine.core.systems.AssetLoader;
 import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.components.*;
@@ -21,7 +24,7 @@ public class TerrainScene extends Scene {
     @Override
     protected void onLoad() {
         environment.sky.moonTexture = engine.getAssetLoader().loadTexture("assets/textures/moon.png", TEXTURE_BLENDED);
-        environment.sky.weather = Sky.SkyWeather.CLOUDY;
+        environment.sky.weather = SkyWeather.CLOUDY;
 
         LightComponent flashlight = new LightComponent(LightComponent.LightType.SPOT_LIGHT);
         flashlight.spotLightInnerCutoff = 0.982f;
@@ -49,8 +52,8 @@ public class TerrainScene extends Scene {
         player.attachComponent(new PlayerController());
         player.attachComponent(flashlight);
 
-        engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
-        engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
+        engine.getInputService().setMapping("toggleFlash", InputType.KEYBOARD, GLFW_KEY_F);
+        engine.getInputService().setMapping("focusFlash", InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
 
         LuaScript flashlightScript = engine.getAssetLoader().loadLuaScript("flashScript", "src/main/java/org/sharkk2/game/scripts/flashlight.lua");
         flashlightScript.passObject(flashlight, "flashlight");
@@ -90,7 +93,7 @@ public class TerrainScene extends Scene {
         AudioComponent audio = new AudioComponent(engine.getAssetLoader().loadAudioFile("assets/audio/sound-mono.wav"));
         audio.looping = true;
         audio.playing = true;
-        audio.type = AudioComponent.AudioType.DIRECTED_AUDIO;
+        audio.type = AudioType.DIRECTED_AUDIO;
         audio.innerConeAngle = 70;
         audio.outerConeAngle = 180;
         audio.maxDistance = 10;
@@ -147,7 +150,6 @@ public class TerrainScene extends Scene {
                 GameObject obj = new GameObject(engine);
                 ModelComponent model = engine.getAssetLoader().primitives.cube();
                 obj.attachComponent(model);
-                model.batch();
                 obj.transform.position(i, 30, j);
                 addObject(obj);
 

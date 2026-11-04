@@ -4,14 +4,12 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.core.classes.Component;
-import org.sharkk2.sengine.core.classes.animation.Animation;
-import org.sharkk2.sengine.core.classes.animation.Joint;
-import org.sharkk2.sengine.core.classes.animation.JointTransform;
-import org.sharkk2.sengine.core.classes.animation.Keyframe;
+import org.sharkk2.sengine.core.classes.Animation;
+import org.sharkk2.sengine.core.classes.Joint;
+import org.sharkk2.sengine.core.classes.JointTransform;
+import org.sharkk2.sengine.core.classes.Keyframe;
 
 import java.util.*;
-
-import static org.lwjgl.glfw.GLFW.glfwGetTime;
 
 public class AnimationComponent extends Component {
     private final List<Animation> animations = new ArrayList<>();
@@ -26,7 +24,7 @@ public class AnimationComponent extends Component {
 
     public AnimationComponent(List<Animation> animations) {
         this.animations.addAll(animations);
-        for (Animation anim : animations) animationsByName.put(anim.name, anim);
+        for (Animation anim : animations) animationsByName.put(anim.name(), anim);
     }
 
     public List<Animation> getAnimations() { return animations; }
@@ -58,7 +56,7 @@ public class AnimationComponent extends Component {
     @Override
     protected void onObjectAttach() {
         if (animations.isEmpty()) return;
-        int jointCount = countJoints(animations.get(0).rootJoint);
+        int jointCount = countJoints(animations.get(0).rootJoint());
         boneMatrices = new Matrix4f[jointCount];
         for (int i = 0; i < jointCount; i++) boneMatrices[i] = new Matrix4f();
     }
@@ -79,33 +77,33 @@ public class AnimationComponent extends Component {
         if (!playing || currentAnimation == null) return;
 
         time += dt * animationSpeed;
-        if (time > currentAnimation.duration) {
-            if (looping) {time %= currentAnimation.duration;}
+        if (time > currentAnimation.duration()) {
+            if (looping) {time %= currentAnimation.duration();}
             else {
-                time = currentAnimation.duration;
+                time = currentAnimation.duration();
                 playing = false;
             }
         }
 
         List<JointTransform> pose = sampleKeyframes(currentAnimation, time);
-        applyPose(currentAnimation.rootJoint, pose, new Matrix4f());
+        applyPose(currentAnimation.rootJoint(), pose, new Matrix4f());
     }
 
     private List<JointTransform> sampleKeyframes(Animation anim, float t) {
-        List<Keyframe> keyframes = anim.keyframes;
-        if (keyframes.size() == 1 || t <= keyframes.get(0).timestamp) return keyframes.get(0).jointTransforms;
+        List<Keyframe> keyframes = anim.keyframes();
+        if (keyframes.size() == 1 || t <= keyframes.get(0).timestamp()) return keyframes.get(0).jointTransforms();
         Keyframe last = keyframes.getLast();
-        if (t >= last.timestamp) return last.jointTransforms;
+        if (t >= last.timestamp()) return last.jointTransforms();
 
         for (int i = 0; i < keyframes.size() - 1; i++) {
             Keyframe a = keyframes.get(i);
             Keyframe b = keyframes.get(i + 1);
-            if (t >= a.timestamp && t <= b.timestamp) {
-                float blend = (t - a.timestamp) / (b.timestamp - a.timestamp);
-                return interpolatePose(a.jointTransforms, b.jointTransforms, blend);
+            if (t >= a.timestamp() && t <= b.timestamp()) {
+                float blend = (t - a.timestamp()) / (b.timestamp() - a.timestamp());
+                return interpolatePose(a.jointTransforms(), b.jointTransforms(), blend);
             }
         }
-        return last.jointTransforms;
+        return last.jointTransforms();
     }
 
     private List<JointTransform> interpolatePose(List<JointTransform> a, List<JointTransform> b, float blend) {
@@ -113,8 +111,8 @@ public class AnimationComponent extends Component {
         for (int i = 0; i < a.size(); i++) {
             JointTransform ta = a.get(i);
             JointTransform tb = b.get(i);
-            Vector3f pos = new Vector3f(ta.position).lerp(tb.position, blend);
-            Quaternionf rot = new Quaternionf(ta.rotation).slerp(tb.rotation, blend);
+            Vector3f pos = new Vector3f(ta.position()).lerp(tb.position(), blend);
+            Quaternionf rot = new Quaternionf(ta.rotation()).slerp(tb.rotation(), blend);
             result.add(new JointTransform(pos, rot));
         }
         return result;
@@ -122,7 +120,7 @@ public class AnimationComponent extends Component {
 
     private void applyPose(Joint joint, List<JointTransform> pose, Matrix4f parentTransform) {
         JointTransform t = pose.get(joint.id);
-        Matrix4f localTransform = new Matrix4f().translationRotate(t.position, t.rotation);
+        Matrix4f localTransform = new Matrix4f().translationRotate(t.position(), t.rotation());
         Matrix4f globalTransform = new Matrix4f(parentTransform).mul(localTransform);
 
         boneMatrices[joint.id] = new Matrix4f(globalTransform).mul(joint.inverseBindTransform);
@@ -135,10 +133,10 @@ public class AnimationComponent extends Component {
     // seek is such a funny word seek seek seeeek seeeeeeeeekkuh
     /** `timeframe` is clamped between 0 and the current animation's duration*/
     public void seek(float timeframe) {
-        timeframe = Math.clamp(timeframe, 0f, currentAnimation.duration);
+        timeframe = Math.clamp(timeframe, 0f, currentAnimation.duration());
         time = timeframe;
         List<JointTransform> pose = sampleKeyframes(currentAnimation, timeframe);
-        applyPose(currentAnimation.rootJoint, pose, new Matrix4f());
+        applyPose(currentAnimation.rootJoint(), pose, new Matrix4f());
     }
 
     public boolean isPlaying() {return playing;}

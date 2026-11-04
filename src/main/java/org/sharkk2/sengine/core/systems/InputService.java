@@ -3,6 +3,7 @@ package org.sharkk2.sengine.core.systems;
 import org.lwjgl.glfw.GLFWGamepadState;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.enums.InputType;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -24,7 +25,6 @@ public class InputService {
     private double scrollDX = 0, scrollDY = 0;
     private volatile boolean firstMouseEvent = true;
     private boolean mouselock;
-    public enum InputType { KEYBOARD, MOUSE, JOYSTICK }
     public record InputBinding(InputType type, int code) {}
     private final Map<String, InputBinding> mappings = new HashMap<>();
     private static boolean gamepadConnected = false;

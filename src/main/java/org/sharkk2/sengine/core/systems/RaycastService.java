@@ -9,6 +9,7 @@ import org.sharkk2.sengine.core.Helpers;
 import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.RenderMethod;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
@@ -74,7 +75,7 @@ public class RaycastService {
         float closestT = maxDistance;
         float[] out = new float[2];
         for (ModelComponent model : scanPool) {
-            if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
+            if (model.getRenderMethod() == RenderMethod.RENDER_SKIP && onlyVisible) continue;
             boolean hit = rayIntersects(position, direction, model.bounds, out);
             if (hit && out[0] >= 0.01f && out[0] < closestT) {
                 closestT = out[0];
@@ -113,7 +114,7 @@ public class RaycastService {
         float closestT = maxDistance;
         float[] out = new float[2];
         for (ModelComponent model : scanPool) {
-            if (model.getRenderMethod() == Renderer.RenderMethod.RENDER_SKIP && onlyVisible) continue;
+            if (model.getRenderMethod() == RenderMethod.RENDER_SKIP && onlyVisible) continue;
             boolean hit = rayIntersects(position, rDir, model.bounds, out);
             if (hit && out[0] >= 0.01f && out[0] < closestT) {
                 closestT = out[0];

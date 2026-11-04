@@ -3,6 +3,8 @@ package org.sharkk2.sengine.core.systems.renderer.passes;
 import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.enums.DrawMode;
+import org.sharkk2.sengine.core.classes.enums.TextureSlot;
 import org.sharkk2.sengine.core.classes.exceptions.FrameBufferException;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
@@ -113,7 +115,7 @@ public class GBufferPass extends RenderPass {
 
 
     private void drawElements(ModelComponent model, int instanceCount) {
-        int mode = model.getDrawMode() == Renderer.DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES;
+        int mode = model.getDrawMode() == DrawMode.TRIANGLES && !engine.getRenderer().wireframeEnabled() ? GL_TRIANGLES : GL_LINES;
         if (instanceCount > 0) {
             glDrawElementsInstanced(mode, model.indexCount, GL_UNSIGNED_INT, 0, instanceCount);
         } else {
@@ -131,9 +133,9 @@ public class GBufferPass extends RenderPass {
         gBufferDepthShader.setFloat("uAlphaMaskThreshold", model.material.alphaMaskThreshold);
         gBufferDepthShader.setInt("uAlphaCutout", model.material.alphaCutout ? 1 : 0);
         int unit = 0;
-        unit = engine.getRenderer().bindTexture2D(gBufferDepthShader, Renderer.TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(gBufferDepthShader, Renderer.TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
-        engine.getRenderer().bindTexture2D(gBufferDepthShader, Renderer.TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferDepthShader, TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferDepthShader,TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
+        engine.getRenderer().bindTexture2D(gBufferDepthShader,TextureSlot.ALPHA_MASK, model.material.getAlphaMaskTexture(), unit);
         int boffset = ctx.animationBoneOffsets.get(model);
         if (boffset >= 0) {
             gBufferDepthShader.setInt("uSkinned", 1);
@@ -159,15 +161,15 @@ public class GBufferPass extends RenderPass {
         gBufferShader.setInt("isPackedORM", isPacked ? 1 : 0);
         int unit = 0;
 
-        unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.ROUGHNESS, model.material.getRoughnessTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.ALBEDO, model.material.getAlbedoTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.ROUGHNESS, model.material.getRoughnessTexture(), unit);
         if (!isPacked) {
-            unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.METALNESS, model.material.getMetalnessTexture(), unit);
+            unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.METALNESS, model.material.getMetalnessTexture(), unit);
         }
-        unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.NORMAL, model.material.getNormalTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.EMISSIVE, model.material.getEmissiveTexture(), unit);
-        unit = engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.AO, model.material.getAoTexture(), unit);
-        engine.getRenderer().bindTexture2D(gBufferShader, Renderer.TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.NORMAL, model.material.getNormalTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.EMISSIVE, model.material.getEmissiveTexture(), unit);
+        unit = engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.AO, model.material.getAoTexture(), unit);
+        engine.getRenderer().bindTexture2D(gBufferShader,TextureSlot.OPACITY, model.material.getOpacityTexture(), unit);
         int boffset = ctx.animationBoneOffsets.get(model);
         if (boffset >= 0) {
             gBufferShader.setInt("uSkinned", 1);

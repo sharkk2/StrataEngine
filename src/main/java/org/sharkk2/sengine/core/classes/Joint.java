@@ -1,4 +1,4 @@
-package org.sharkk2.sengine.core.classes.animation;
+package org.sharkk2.sengine.core.classes;
 
 import org.joml.Matrix4f;
 import java.util.ArrayList;

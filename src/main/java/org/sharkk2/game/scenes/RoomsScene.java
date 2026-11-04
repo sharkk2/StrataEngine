@@ -4,6 +4,7 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.*;
+import org.sharkk2.sengine.core.classes.enums.InputType;
 import org.sharkk2.sengine.core.systems.InputService;
 import org.sharkk2.sengine.core.systems.components.*;
 import org.sharkk2.sengine.core.systems.lua.LuaInstance;
@@ -63,11 +64,11 @@ public class RoomsScene extends Scene {
         addObject(player);
 
         if (!engine.getInputService().isGamepadConnected()) {
-            engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
-            engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
+            engine.getInputService().setMapping("toggleFlash", InputType.KEYBOARD, GLFW_KEY_F);
+            engine.getInputService().setMapping("focusFlash", InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
         } else {
-            engine.getInputService().setMapping("toggleFlash", InputService.InputType.JOYSTICK, GLFW_GAMEPAD_BUTTON_SQUARE);
-            engine.getInputService().setMapping("focusFlash", InputService.InputType.JOYSTICK, GLFW_GAMEPAD_BUTTON_LEFT_BUMPER);
+            engine.getInputService().setMapping("toggleFlash", InputType.JOYSTICK, GLFW_GAMEPAD_BUTTON_SQUARE);
+            engine.getInputService().setMapping("focusFlash", InputType.JOYSTICK, GLFW_GAMEPAD_BUTTON_LEFT_BUMPER);
         }
 
 

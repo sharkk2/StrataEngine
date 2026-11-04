@@ -25,7 +25,7 @@ public class LuaScript {
     private volatile Prototype prototype;
     private final AtomicInteger version = new AtomicInteger(); // atomic integers sound soo cool lol
     private final Globals globals; // shared by every instance
-    private boolean hotreloads = false;
+    private boolean hotReloads = false;
     private final List<String> errors = new ArrayList<>();
     private final FileWatcher watcher;
     public boolean suppressErrors = false;
@@ -41,6 +41,16 @@ public class LuaScript {
         this.watcher = new FileWatcher(Path.of(path), (change) -> {
             if (change.equals(FileWatcher.MODIFY)) reload();
         });
+    }
+
+    public LuaScript(String source, String name) {
+        this.name = name;
+        this.source = source;
+        this.path = "";
+        this.globals = JsePlatform.standardGlobals();
+        this.globals.load(new MathLib());
+        this.prototype = compile(source);
+        this.watcher = null;
     }
 
     private Prototype compile(String src) {
@@ -88,9 +98,10 @@ public class LuaScript {
     }
 
     public void enableHotReloads(boolean v, int checkInterval, Engine engine) {
-        this.hotreloads = v;
+        this.hotReloads = v;
+        if (watcher==null) return;
         if (checkInterval > 0) this.watcher.setInterval(checkInterval);
-        if (hotreloads) {
+        if (hotReloads) {
             engine.getThreadService().runTask(watcher::start);
         } else {
             engine.getThreadService().runTask(watcher::stop);

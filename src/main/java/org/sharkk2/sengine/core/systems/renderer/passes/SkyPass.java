@@ -2,6 +2,7 @@ package org.sharkk2.sengine.core.systems.renderer.passes;
 
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.SkyMode;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.renderer.FrameContext;
 import org.sharkk2.sengine.core.systems.renderer.RenderPass;
@@ -37,14 +38,13 @@ public class SkyPass extends RenderPass {
         shader.use();
 
         shader.setInt("useCubeTex", 0);
-        if (sky.getMode() == Scene.Sky.SkyMode.CUBEMAP) {
+        if (sky.getMode() == SkyMode.CUBEMAP) {
             glActiveTexture(GL_TEXTURE28);
             glBindTexture(GL_TEXTURE_CUBE_MAP, sky.getCubemapTex());
             shader.setInt("cubeTex", 28);
             shader.setInt("useCubeTex", 1);
         } else {
             shader.setInt("dayTime", sky.dayTime);
-            shader.setInt("dayLength", sky.dayLengthSeconds);
             shader.setInt("dayTimeEffective", sky.dayTimeEffect ? 1:0);
             shader.setInt("showSun", sky.showSun ? 1:0);
             shader.setInt("showMoon", sky.showMoon ? 1:0);

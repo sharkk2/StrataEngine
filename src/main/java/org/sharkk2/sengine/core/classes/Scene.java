@@ -4,6 +4,10 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.enums.FogMode;
+import org.sharkk2.sengine.core.classes.enums.ShadowQuality;
+import org.sharkk2.sengine.core.classes.enums.SkyMode;
+import org.sharkk2.sengine.core.classes.enums.SkyWeather;
 import org.sharkk2.sengine.core.classes.exceptions.ValueException;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
 import org.sharkk2.sengine.core.systems.components.GenericControllerComponent;
@@ -43,7 +47,6 @@ public abstract class Scene {
     }
 
     public static class Fog {
-        public enum FogMode {LINEAR, QUADRATIC}
         public Vector3f color = new Vector3f(0.1f,0.1f, 0.1f);
         public float density = 0.005f;
         public float start = 10;
@@ -55,8 +58,6 @@ public abstract class Scene {
 
     public static class Sky {
         public boolean enabled = true;
-        public enum SkyMode {CUBEMAP, PROCEDURAL}
-        public enum SkyWeather {CLEAR, PARTLY_CLOUDY, CLOUDY, OVERCAST}
         private SkyMode mode = SkyMode.PROCEDURAL;
         private int cubemapTex = -1;
         /**Effective only in procedural mode*/
@@ -115,31 +116,19 @@ public abstract class Scene {
         public float intensity = 1.5f;
 
         public boolean castShadow = true;
-        public ShadowMap shadowMap = new ShadowMap(LightComponent.ShadowQuality.HIGH);
-        public float shadowNormalBias = 0.055f;
-
-        private final Matrix4f lightView = new Matrix4f();
-        private final Matrix4f lightProj = new Matrix4f();
-        private final Vector3f up = new Vector3f(0,1,0);
-        private final Vector3f lightPos = new Vector3f();
-        private final Vector3f target = new Vector3f();
+        public final CascadedShadowMap shadowMap = new CascadedShadowMap(ShadowQuality.HIGH, 3);
+        public float shadowNormalBias = 2.55f;
         public boolean enabled = true;
 
-        public Matrix4f calcLightSpace(Engine engine) {
-            float size = engine.getValue("shadows.distance");
-            lightProj.identity().ortho(-size, size, -size, size, 1f, 9999f);
-            target.set(engine.getSceneManager().getActiveScene().getPrimaryCamera().getOwner().transform.getPosition());
-            float texelSize = (size * 2f) / shadowMap.size;
-            target.x = (float)(Math.floor(target.x / texelSize) * texelSize);
-            target.z = (float)(Math.floor(target.z / texelSize) * texelSize);
-            lightPos.set(direction).mul(-90f).add(target);
-            lightView.identity().lookAt(lightPos, target, up);
-            lightProj.mul(lightView);
-            return lightProj;
+        public void calcCascades(Engine engine) {
+            CameraComponent cam = engine.getSceneManager().getActiveScene().getPrimaryCamera();
+            float aspect = engine.getRenderer().getAspectRatio();
+            shadowMap.update(cam, aspect, engine.getValue("shadows.distance"), direction);
         }
 
         // 16 * 3: 48 + 4: 52 + 12 byte padding = 64 bytes
-
+        // idk what the above comment is calculating...
+        // anyway the shadow map calculations are performed and stored in the ShadowMap classes instead of in the scene, the above method just updates the shadowMap.
     }
 
     public Scene(Engine engine, String sceneName) {

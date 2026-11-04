@@ -3,6 +3,7 @@ package org.sharkk2.sengine.core.classes;
 import org.joml.*;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.enums.TransformEvent;
 import org.sharkk2.sengine.core.classes.exceptions.ValueException;
 
 import java.lang.Math;
@@ -68,7 +69,6 @@ public class GameObject {
         private float pitch, yaw, roll;
         private float width = 1, height = 1, depth = 1;
         private final Quaternionf rotation = new Quaternionf();
-        public enum TransformEvent {ROTATION_CHANGE, POSITION_CHANGE, SCALE_CHANGE, PIVOT_CHANGE};
         private List<Consumer<TransformEvent[]>> listeners = new ArrayList<>();
         private boolean dirty = true;
         private long worldVersion = 0;

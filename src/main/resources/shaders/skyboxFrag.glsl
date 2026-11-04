@@ -7,7 +7,6 @@ uniform int useCubeTex;
 uniform samplerCube cubeTex;
 
 uniform int dayTime;
-uniform int dayLength;
 uniform int dayTimeEffective;
 
 uniform int showSun;

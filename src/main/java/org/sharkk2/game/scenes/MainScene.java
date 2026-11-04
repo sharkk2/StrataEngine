@@ -4,6 +4,8 @@ import org.joml.Vector3f;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.game.PlayerController;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.enums.InputType;
+import org.sharkk2.sengine.core.classes.enums.SkyWeather;
 import org.sharkk2.sengine.core.systems.lua.LuaScript;
 import org.sharkk2.sengine.core.classes.Scene;
 import org.sharkk2.sengine.core.systems.InputService;
@@ -22,7 +24,7 @@ public class MainScene extends Scene {
     @Override
     protected void onLoad() {
         environment.sky.moonTexture = engine.getAssetLoader().loadTexture("assets/textures/moon.png", TEXTURE_BLENDED);
-        environment.sky.weather = Sky.SkyWeather.OVERCAST;
+        environment.sky.weather = SkyWeather.OVERCAST;
         GameObject skybox = new GameObject(engine);
 
         addObject(skybox);
@@ -59,8 +61,8 @@ public class MainScene extends Scene {
         player.attachComponent(new PlayerController());
         player.attachComponent(flight);
 
-        engine.getInputService().setMapping("toggleFlash", InputService.InputType.KEYBOARD, GLFW_KEY_F);
-        engine.getInputService().setMapping("focusFlash", InputService.InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
+        engine.getInputService().setMapping("toggleFlash", InputType.KEYBOARD, GLFW_KEY_F);
+        engine.getInputService().setMapping("focusFlash", InputType.MOUSE, GLFW_MOUSE_BUTTON_RIGHT);
 
         LuaScript flashlightScript = engine.getAssetLoader().loadLuaScript("flashScript", "src/main/java/org/sharkk2/game/scripts/flashlight.lua");
         flashlightScript.passObject(flight, "flashlight");
@@ -149,7 +151,6 @@ public class MainScene extends Scene {
 
         GameObject firethingie = engine.getAssetLoader().getModel("fireHydrant");
         firethingie.transform.position(30, 40, 30);
-        firethingie.cascade(ModelComponent.class, ModelComponent::batch);
         addObject(firethingie);
 
 

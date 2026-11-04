@@ -53,7 +53,7 @@ public class Game extends Engine {
              getAssetLoader().loadModel("assets/models/backpack/backpack.obj", "backpack");
 
              getThreadService().runMainThread(() -> {
-                 getSceneManager().setActiveScene(new MainScene(this, "main_scene"));
+                 getSceneManager().setActiveScene(new TerrainScene(this, "main_scene"));
              });
          });
      }

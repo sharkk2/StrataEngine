@@ -9,6 +9,7 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.AudioListener;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.enums.AudioType;
 import org.sharkk2.sengine.core.classes.exceptions.AudioException;
 import org.sharkk2.sengine.core.systems.components.AudioComponent;
 import org.sharkk2.sengine.core.systems.components.CameraComponent;
@@ -98,7 +99,7 @@ public class AudioService {
         alSourcef(source, AL_ROLLOFF_FACTOR, comp.fadeRate);
         alSourcef(source, AL_REFERENCE_DISTANCE, comp.minDistance);
         alSourcef(source, AL_MAX_DISTANCE, comp.maxDistance);
-        if (comp.type == AudioComponent.AudioType.DIRECTED_AUDIO) {
+        if (comp.type == AudioType.DIRECTED_AUDIO) {
             alSourcef(source, AL_CONE_INNER_ANGLE, comp.innerConeAngle);
             alSourcef(source, AL_CONE_OUTER_ANGLE, comp.outerConeAngle);
             alSourcef(source, AL_CONE_OUTER_GAIN, comp.outerConeVolume);
@@ -141,7 +142,7 @@ public class AudioService {
             Vector3f velocity = computeVelocity(comp, currentPos);
             alSource3f(source, AL_POSITION, currentPos.x, currentPos.y, currentPos.z);
             alSource3f(source, AL_VELOCITY, velocity.x, velocity.y, velocity.z);
-            if (comp.type == AudioComponent.AudioType.DIRECTED_AUDIO) {
+            if (comp.type == AudioType.DIRECTED_AUDIO) {
                 Vector3f forward = comp.preferObjectDirection ? comp.getOwner().transform.getDirection() : comp.direction;
                 alSource3f(source, AL_DIRECTION, forward.x, forward.y, forward.z);
                 alSourcef(source, AL_CONE_INNER_ANGLE, comp.innerConeAngle);
@@ -199,7 +200,7 @@ public class AudioService {
         alSourcef(source, AL_ROLLOFF_FACTOR, comp.fadeRate);
         alSourcef(source, AL_REFERENCE_DISTANCE, comp.minDistance);
         alSourcef(source, AL_MAX_DISTANCE, comp.maxDistance);
-        if (comp.type == AudioComponent.AudioType.DIRECTED_AUDIO) {
+        if (comp.type == AudioType.DIRECTED_AUDIO) {
             Vector3f forward = comp.preferObjectDirection ? comp.getOwner().transform.getDirection() : comp.direction;
             alSource3f(source, AL_DIRECTION, forward.x, forward.y, forward.z);
             alSourcef(source, AL_CONE_INNER_ANGLE, comp.innerConeAngle);

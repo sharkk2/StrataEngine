@@ -1,18 +1,37 @@
 package org.sharkk2.sengine.core.classes;
 
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.sharkk2.sengine.core.classes.enums.ShadowQuality;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 
 import java.nio.ByteBuffer;
 
 import static org.lwjgl.opengl.GL43.*;
 
-public class CubeShadowMap {
-    public final LightComponent.ShadowQuality quality;
+public class CubeShadowMap implements IShadowMap {
+    public final ShadowQuality quality;
     public final int size;
     public int fbo;
     public int depthCubemap;
+    private static final Vector3f[] DIRS = {
+            new Vector3f(1, 0, 0), new Vector3f(-1, 0, 0),
+            new Vector3f(0, 1, 0), new Vector3f(0, -1, 0),
+            new Vector3f(0, 0, 1), new Vector3f(0, 0, -1)
+    };
+    private static final Vector3f[] UPS = {
+            new Vector3f(0, -1, 0), new Vector3f(0, -1, 0),
+            new Vector3f(0, 0, 1),  new Vector3f(0, 0, -1),
+            new Vector3f(0, -1, 0), new Vector3f(0, -1, 0)
+    };
+    private final Matrix4f view = new Matrix4f();
+    private final Vector3f target = new Vector3f();
+    private final Matrix4f[] faceMatrices = {
+            new Matrix4f(), new Matrix4f(), new Matrix4f(),
+            new Matrix4f(), new Matrix4f(), new Matrix4f()
+    };
 
-    private void init() {
+    public void init() {
         depthCubemap = glGenTextures();
         glActiveTexture(GL_TEXTURE31);
         glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
@@ -34,7 +53,7 @@ public class CubeShadowMap {
 
     }
 
-    public CubeShadowMap(LightComponent.ShadowQuality quality) {
+    public CubeShadowMap(ShadowQuality quality) {
         this.quality = quality;
         this.size = (int)(1024 * Math.pow(2, quality.ordinal()));
         init();
@@ -57,5 +76,15 @@ public class CubeShadowMap {
     public void cleanup() {
         glDeleteFramebuffers(fbo);
         glDeleteTextures(depthCubemap);
+    }
+
+    /** +X, -X, +Y, -Y, +Z, -Z*/
+    public Matrix4f[] update(Vector3f pos, float range) {
+        for (int face = 0; face < 6; face++) {
+            target.set(pos).add(DIRS[face]);
+            view.identity().lookAt(pos, target, UPS[face]);
+            faceMatrices[face].identity().perspective((float) Math.toRadians(90.0), 1f, 0.1f, range).mul(view);
+        }
+        return faceMatrices;
     }
 }

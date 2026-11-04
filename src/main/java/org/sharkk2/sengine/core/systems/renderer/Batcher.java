@@ -23,7 +23,7 @@ public class Batcher {
         unbatched.clear();
 
         for (ModelComponent model : models) {
-            String id = model.batchID;
+            String id = model.getBatchID();
             if (id == null || id.isEmpty()) {
                 unbatched.add(model);
                 continue;
@@ -35,5 +35,6 @@ public class Batcher {
             }
             list.add(model);
         }
+
     }
 }

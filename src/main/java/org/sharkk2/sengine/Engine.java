@@ -2,6 +2,7 @@ package org.sharkk2.sengine;
 
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLDebugMessageCallback;
+import org.sharkk2.sengine.core.classes.enums.ShadowQuality;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.*;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
@@ -27,7 +28,7 @@ public class Engine {
     public boolean running = false;
     private boolean devMode;
 
-    public final String version = "3.2.2";
+    public final String version = "3.2.3";
     private long windowHandle;
     private int windowWidth, windowHeight;
     private long monitor;
@@ -90,13 +91,12 @@ public class Engine {
     public ThreadService getThreadService() {return threadService;}
     public ComponentRegistry getComponentRegistry() {return componentRegistry;}
 
-    public void setResolution(int width, int height) {
-        valueConfig.put("res_width", (float)Math.max(width, 100));
-        valueConfig.put("res_height", (float)Math.max(height, 100));
-        renderer.resize();
-    }
-
     public boolean isDevMode() {return devMode;}
+
+    public void logInfo(String msg) {Logger.info(msg);}
+    public void logWarn(String msg) {Logger.warning(msg);}
+    public void logError(String msg) {Logger.error(msg);}
+
 
     public Engine() {
         ioConfig.put("debug", true);
@@ -109,26 +109,24 @@ public class Engine {
         ioConfig.put("mouse_visible", false);
 
         ioConfig.put("imgui.debug_overlay", true);
-        ioConfig.put("imgui.full_settings", true);
         ioConfig.put("imgui.enabled", true);
-        ioConfig.put("gizmo.snap_enabled", false);
 
         ioConfig.put("hdr", true);
-        ioConfig.put("apply_aces", false);
-        ioConfig.put("color_grading", false);
-        ioConfig.put("gamma_correct", true);
+
         ioConfig.put("lens_dirt", true);
 
         ioConfig.put("light_shafts", true);
 
-
-        valueConfig.put("exposure", 1.3f);
+        // todo: move those 4 into CameraComponent
+        valueConfig.put("saturation", 1.6f);
+        ioConfig.put("apply_aces", false);
+        ioConfig.put("color_grading", false);
 
         valueConfig.put("anisotropic_filtering", 16f);
-        valueConfig.put("saturation", 1.6f);
         valueConfig.put("gamma", 2.2f);
-        valueConfig.put("shadows.quality", (float) LightComponent.ShadowQuality.MEDIUM.ordinal()); // 0: HD, 1: 2K, 2: 4K
-        valueConfig.put("shadows.distance", 36f);
+        ioConfig.put("gamma_correct", true);
+        valueConfig.put("shadows.quality", (float) ShadowQuality.MEDIUM.ordinal()); // 0: HD, 1: 2K, 2: 4K
+        valueConfig.put("shadows.distance", 196f);
         valueConfig.put("ssao_samples", 20f);
         valueConfig.put("bloom_strength", 0.04f);
         valueConfig.put("bloom_spread", 0.009f);
@@ -139,7 +137,6 @@ public class Engine {
         valueConfig.put("godray_density", 0.75f);
         valueConfig.put("godray_weight", 0.3f);
         valueConfig.put("godray_max_brightness", 0.2f);
-        valueConfig.put("gizmo.snap_amount", 0.5f);
         valueConfig.put("res_width", 1920f);
         valueConfig.put("res_height", 1080f);
         valueConfig.put("lens_dirt.intensity", 10f);

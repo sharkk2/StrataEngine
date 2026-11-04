@@ -1,19 +1,28 @@
 package org.sharkk2.sengine.core.classes;
 
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.enums.ShadowQuality;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 
 import java.nio.ByteBuffer;
 
 import static org.lwjgl.opengl.GL43.*;
 
-public class ShadowMap {
-    public final LightComponent.ShadowQuality quality;
+public class ShadowMap implements IShadowMap {
+    public final ShadowQuality quality;
     public final int size;
     public int fbo;
     public int depthTexture;
+    private final Matrix4f lightView = new Matrix4f();
+    private final Matrix4f lightProj = new Matrix4f();
+    private final Vector3f up = new Vector3f(0,1,0);
+    private final Vector3f anotherUP = new Vector3f(1,0,0);
+    private final Vector3f target = new Vector3f();
 
-    private void init() {
+
+    public void init() {
         depthTexture = glGenTextures();
         glActiveTexture(GL_TEXTURE31);
         glBindTexture(GL_TEXTURE_2D, depthTexture);
@@ -35,8 +44,15 @@ public class ShadowMap {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
+    public Matrix4f update(Vector3f pos, Vector3f dir, float outerCutoff, float range) {
+        float fovY = (float) (2.0 * Math.acos(outerCutoff));
+        lightProj.identity().perspective(fovY, 1f, 0.1f, range);
+        target.set(pos).add(dir);
+        lightView.identity().lookAt(pos, target, Math.abs(dir.y) < 0.999f ? up : anotherUP);
+        return lightProj.mul(lightView);
+    }
 
-    public ShadowMap(LightComponent.ShadowQuality quality) {
+    public ShadowMap(ShadowQuality quality) {
         this.quality = quality;
         this.size = (int)(1024 * Math.pow(2, quality.ordinal()));
         init();

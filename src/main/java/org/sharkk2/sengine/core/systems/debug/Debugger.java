@@ -6,6 +6,7 @@ import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.GameObject;
+import org.sharkk2.sengine.core.classes.enums.RenderMethod;
 import org.sharkk2.sengine.core.classes.exceptions.EngineInitException;
 import org.sharkk2.sengine.core.systems.AssetLoader;
 import org.sharkk2.sengine.core.systems.ShaderService;
@@ -76,7 +77,7 @@ public class Debugger {
         billboard.name = "debug_billboard";
         billboard.material.enabled = false;
         billboard.frustumCulled = false;
-        billboard.setRenderMethod(Renderer.RenderMethod.RENDER_DEFERRED);
+        billboard.setRenderMethod(RenderMethod.RENDER_DEFERRED);
 
         GameObject object = new GameObject(engine);
         object.attachComponent(billboard);
@@ -88,7 +89,7 @@ public class Debugger {
         if (boundsobj == null) {
             boundsobj = new GameObject(engine);
             boundsobj.attachComponent(engine.getAssetLoader().primitives.wireframeBox());
-            boundsobj.getComponent(ModelComponent.class).setRenderMethod(Renderer.RenderMethod.RENDER_FORWARD);
+            boundsobj.getComponent(ModelComponent.class).setRenderMethod(RenderMethod.RENDER_FORWARD);
             boundsObjects.put(bounds, boundsobj);
         }
 
@@ -107,7 +108,7 @@ public class Debugger {
             ModelComponent mc = engine.getAssetLoader().primitives.line();
             mc.material.albedo.set(1, 0, 0);
             mc.material.emissiveStrength = 2f;
-            mc.setRenderMethod(Renderer.RenderMethod.RENDER_FORWARD);
+            mc.setRenderMethod(RenderMethod.RENDER_FORWARD);
             lineObj.attachComponent(mc);
             directionObjects.put(targetObj, lineObj);
         }

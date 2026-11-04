@@ -1,0 +1,4 @@
+package org.sharkk2.sengine.core.classes.enums;
+
+public enum RenderMode {MODE_ALL, MODE_BASECOLOR, MODE_METALNESS, MODE_ROUGHNESS, MODE_NORMALS, MODE_EMISSIVE, MODE_AO, MODE_OPACITY, MODE_DEFERRED_ONLY, MODE_MAX}
+

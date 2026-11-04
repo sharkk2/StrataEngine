@@ -6,7 +6,10 @@ import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.Engine;
 import org.sharkk2.sengine.Logger;
+import org.sharkk2.sengine.core.classes.CascadedShadowMap;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.DrawMode;
+import org.sharkk2.sengine.core.classes.enums.TextureSlot;
 import org.sharkk2.sengine.core.systems.ShaderService;
 import org.sharkk2.sengine.core.systems.components.LightComponent;
 import org.sharkk2.sengine.core.systems.components.ModelComponent;
@@ -25,16 +28,30 @@ import static org.lwjgl.opengl.GL43.*;
 // translucent objects behind opaque objects arent put in the translucent texture as they fail the hardware depth test of the depth map itself.
 // and if they arent behind they are put but they dont write in the depth texture of the light
 // and inside the fragment u check if u have an opaque object covering? if yes, fully darken, if no, sample translcuent value and apply it?
+
+
+// PROBLEMS:
+// 1. CASCADES RUN SLOW ASFFF (USE GEOMETRY SHADER TO REDUCE DRAWCALLS)
+
 public class ShadowPass extends RenderPass {
     private static final String[] FACE_UNIFORMS = new String[6];
+    private static final String[] CASCADE_UNIFORMS = new String[8];
+
     static {
         for (int i = 0; i < 6; i++) FACE_UNIFORMS[i] = "shadowMatrices[" + i + "]";
+        for (int i = 0; i < 8; i++) CASCADE_UNIFORMS[i] = "cascadeMatrices[" + i + "]";
+
     }
+
+
+    private final FrustumIntersection[] cascadeFrustums = new FrustumIntersection[8];
+
 
     private static final Comparator<ModelComponent> DRAW_ORDER = Comparator.comparingInt((ModelComponent m) -> m.vao).thenComparingInt(m -> m.material.getAlbedoTexture());
 
     private final ShaderService.Shader depthShader;
     private final ShaderService.Shader cubeDepthShader;
+    private final ShaderService.Shader cascadeDepthShader;
     private final Set<UUID> bakedShadowLights = new HashSet<>();
     private final List<ModelComponent> visibleCasters = new ArrayList<>();
     private final FrustumIntersection frustum = new FrustumIntersection();
@@ -44,8 +61,10 @@ public class ShadowPass extends RenderPass {
 
     public ShadowPass(Engine engine) {
         super(engine, "shadow_Pass");
+        for (int i = 0; i < 8; i++) cascadeFrustums[i] = new FrustumIntersection();
         depthShader = engine.getShaderService().get("shaders/spass/shadowVert.glsl", "shaders/spass/shadowFrag.glsl");
         cubeDepthShader = engine.getShaderService().getGeometry("shaders/spass/shadowVert.glsl", "shaders/spass/shadowGeom.glsl", "shaders/spass/shadowFrag.glsl");
+        cascadeDepthShader = engine.getShaderService().getGeometry("shaders/spass/shadowVert.glsl", "shaders/spass/shadowCGeom.glsl", "shaders/spass/shadowFrag.glsl");
     }
 
 
@@ -78,8 +97,8 @@ public class ShadowPass extends RenderPass {
         shader.setFloat("uOpacity", model.material.opacity);
 
 
-        engine.getRenderer().bindTexture2D(shader, Renderer.TextureSlot.ALBEDO, model.material.getAlbedoTexture(), 4);
-        engine.getRenderer().bindTexture2D(shader, Renderer.TextureSlot.OPACITY, model.material.getOpacityTexture(), 5);
+        engine.getRenderer().bindTexture2D(shader, TextureSlot.ALBEDO, model.material.getAlbedoTexture(), 4);
+        engine.getRenderer().bindTexture2D(shader, TextureSlot.OPACITY, model.material.getOpacityTexture(), 5);
 
         int boffset = ctx.animationBoneOffsets.get(model);
         if (boffset >= 0) {
@@ -89,7 +108,7 @@ public class ShadowPass extends RenderPass {
             shader.setInt("uSkinned", 0);
         }
 
-        int mode = model.getDrawMode() == Renderer.DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES;
+        int mode = model.getDrawMode() == DrawMode.TRIANGLES ? GL_TRIANGLES : GL_LINES;
         if (instanceCount > 0) {
             glDrawElementsInstanced(mode, model.indexCount, GL_UNSIGNED_INT, 0, instanceCount);
         } else {
@@ -167,13 +186,35 @@ public class ShadowPass extends RenderPass {
         }
 
         light.getOwner().transform.getPosition().add(light.offset, tmpLightPos);
-        cubeDepthShader.setVec3("lightPos", tmpLightPos);
-        cubeDepthShader.setFloat("farPlane", light.range);
         cubeDepthShader.setInt("uCubePass", 1);
 
         cullRange(light, tmpLightPos, ctx.shadowingModels);
         drawVisible(cubeDepthShader, ctx);
         if (light.bakeShadows) bakedShadowLights.add(light.getID());
+    }
+
+    private void renderCascadeShadowMaps(CascadedShadowMap map, FrameContext ctx) {
+        for (int i = 0; i < map.layers; i++) cascadeFrustums[i].set(map.matrices[i]);
+        visibleCasters.clear();
+        for (ModelComponent m : ctx.shadowingModels) {
+            Vector3f c = m.bounds.worldCenter;
+            float r = m.bounds.boundingRadius;
+            for (int i = 0; i < map.layers; i++) {
+                if (r * 2f < map.texelSizes[i]) continue; // smaller than a texel here
+                if (!cascadeFrustums[i].testSphere(c.x, c.y, c.z, r)) continue;
+                visibleCasters.add(m);
+                break;
+            }
+        }
+
+        glViewport(0, 0, map.size, map.size);
+        map.bindAllLayers();
+        glClear(GL_DEPTH_BUFFER_BIT);
+        cascadeDepthShader.use();
+        for (int i = 0; i < map.layers; i++) cascadeDepthShader.setMat4(CASCADE_UNIFORMS[i], map.matrices[i]);
+        cascadeDepthShader.setInt("uCubePass", 1);
+        cascadeDepthShader.setInt("cascadeCount", map.layers);
+        drawVisible(cascadeDepthShader, ctx);
     }
 
     @Override
@@ -184,7 +225,8 @@ public class ShadowPass extends RenderPass {
 
         Scene.GlobalSceneLight gsl = frameContext.scene.environment.globalLight;
         if (gsl.castShadow) {
-            renderShadowMap(gsl.shadowMap.fbo, gsl.shadowMap.size, gsl.calcLightSpace(engine), frameContext);
+            gsl.calcCascades(engine);
+            renderCascadeShadowMaps(gsl.shadowMap, frameContext);
         }
 
         for (LightComponent light : frameContext.shadowLights) {

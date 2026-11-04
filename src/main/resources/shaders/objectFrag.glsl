@@ -1,6 +1,10 @@
 #version 430 core
 #extension GL_ARB_bindless_texture : enable
 
+#define MAX_CASCADES 8
+#define MAX_COOKIE_LIGHTS 64
+#define MAX_SHADOW_MAPS 64
+
 in vec2 vUV;
 in vec3 vWorldPos;
 in vec3 vNormal;
@@ -16,8 +20,11 @@ uniform float dlIntensity;
 uniform float dlNormalShadowBias;
 
 uniform int globalShadowEnabled;
-uniform sampler2DShadow globalShadowTex;
-uniform mat4 globalLightSpaceMatrix;
+uniform sampler2DArrayShadow globalShadowTex;
+uniform int gsCascadeLayers = 4;
+uniform mat4 gsCascadeMatrices[MAX_CASCADES];
+uniform float gsCascadeSplits[MAX_CASCADES];
+uniform float gsCascadeTexel[MAX_CASCADES];
 
 uniform sampler2D albedoTex;
 uniform vec3 albedo;
@@ -56,8 +63,6 @@ uniform int useAlphaMaskTex;
 
 
 uniform int lightEnabled;
-#define MAX_COOKIE_LIGHTS 64
-#define MAX_SHADOW_MAPS 64
 
 struct Light {
     vec3 position;
@@ -108,6 +113,7 @@ layout(std140, binding = 0) uniform Camera {
 
 uniform int renderingMode;
 const float PI = 3.14159265359;
+const float gsCascadeBlend = 0.15; // fraction of each cascade used for blending
 
 const vec2 poissonDisk[16] = vec2[](
         vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
@@ -123,6 +129,57 @@ const vec2 poissonDisk[16] = vec2[](
 float rand(vec4 seed) {
     float dot_product = dot(seed, vec4(12.9898, 78.233, 45.164, 94.673));
     return fract(sin(dot_product) * 43758.5453);
+}
+
+float sampleCascade(int layer, vec3 worldPos, vec3 norm, out bool valid) {
+    float texel = gsCascadeTexel[layer];
+    float NdotL = clamp(dot(norm, dlDirection), 0.0, 1.0);
+    float sinTheta = sqrt(1.0 - NdotL * NdotL);
+
+    vec3 p = worldPos + norm * (dlNormalShadowBias * texel * sinTheta);
+
+    vec3 proj = (gsCascadeMatrices[layer] * vec4(p, 1.0)).xyz * 0.5 + 0.5;
+    valid = all(greaterThanEqual(proj.xy, vec2(0.0))) && all(lessThanEqual(proj.xy, vec2(1.0))) && proj.z <= 1.0;
+    if (!valid) return 1.0;
+
+    float angle = rand(vec4(gl_FragCoord.xyy, 1.0)) * 6.28318;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, s, -s, c);
+    vec2 texelSize = 1.0 / vec2(textureSize(globalShadowTex, 0).xy);
+
+    float shadow = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 offset = rotation * poissonDisk[i] * texelSize * 2.0;
+        shadow += texture(globalShadowTex, vec4(proj.xy + offset, float(layer), proj.z));
+    }
+    return shadow / 16.0;
+}
+
+
+
+float computeCascadeShadow(vec3 worldPos, float viewDepth, vec3 norm) {
+    int last = gsCascadeLayers - 1;
+    if (viewDepth > gsCascadeSplits[last]) return 1.0;
+    int layer = last;
+    for (int i = 0; i < gsCascadeLayers; i++) {
+        if (viewDepth < gsCascadeSplits[i]) { layer = i; break; }
+    }
+
+    bool valid;
+    float shadow = sampleCascade(layer, worldPos, norm, valid);
+    if (!valid) return 1.0;
+    if (layer < last) {
+        float start = layer > 0 ? gsCascadeSplits[layer - 1] : 0.0;
+        float band = (gsCascadeSplits[layer] - start) * gsCascadeBlend;
+        float t = smoothstep(gsCascadeSplits[layer] - band, gsCascadeSplits[layer], viewDepth);
+        if (t > 0.0) {
+            bool validNext;
+            float next = sampleCascade(layer + 1, worldPos, norm, validNext);
+            if (validNext) shadow = mix(shadow, next, t);
+        }
+    }
+    return shadow;
 }
 
 float computeShadow(sampler2DShadow map, vec4 posLightSpace, vec3 norm, vec3 lightDir) {
@@ -288,8 +345,8 @@ void main() {
 
         float shadowFactor = 1.0;
         if (globalShadowEnabled == 1) {
-            vec4 posLightSpace = globalLightSpaceMatrix * vec4(vWorldPos + norm * dlNormalShadowBias, 1.0);
-            shadowFactor = computeShadow(globalShadowTex, posLightSpace, norm, L);
+            float viewDepth = abs((uView * vec4(vWorldPos, 1.0)).z);
+            shadowFactor = computeCascadeShadow(vWorldPos, viewDepth, norm);
         }
 
         Lo += (diffuse + specular) * dlColor * NdotL * dlIntensity * shadowFactor;

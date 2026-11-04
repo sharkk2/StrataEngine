@@ -6,6 +6,7 @@ import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.CubeShadowMap;
 import org.sharkk2.sengine.core.classes.ShadowMap;
+import org.sharkk2.sengine.core.classes.enums.ShadowQuality;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,7 +14,6 @@ import java.util.List;
 
 public class LightComponent extends Component {
     public enum LightType {SPOT_LIGHT, POINT_LIGHT}
-    public enum ShadowQuality {LOW, MEDIUM, HIGH}
     private LightType type;
     public final Vector3f offset = new Vector3f(0,0,0);
     public final Vector3f color = new Vector3f(1,1,1);
@@ -32,40 +32,14 @@ public class LightComponent extends Component {
     public boolean castShadow = false;
     public boolean bakeShadows = false;
     public float shadowNormalBias = 0.03f;
-    private final Matrix4f lightView = new Matrix4f();
-    private final Matrix4f lightProj = new Matrix4f();
-    private final Vector3f up = new Vector3f(0,1,0);
-    private final Vector3f target = new Vector3f();
-    private final Matrix4f[] cubeLightSpace = {
-            new Matrix4f(), new Matrix4f(), new Matrix4f(),
-            new Matrix4f(), new Matrix4f(), new Matrix4f()
-    };
-
-    private static final Vector3f[] CUBE_DIRS = {
-            new Vector3f( 1,0,0), new Vector3f(-1,  0,  0), // +X, -X
-            new Vector3f( 0,1,0), new Vector3f( 0, -1,  0), // +Y, -Y
-            new Vector3f( 0,0,1), new Vector3f( 0,  0, -1)  // +Z, -Z
-    };
-    private static final Vector3f[] CUBE_UPS = {
-            new Vector3f(0,-1,0), new Vector3f(0,-1,0),
-            new Vector3f(0,0,1), new Vector3f(0,0,-1),
-            new Vector3f(0,-1,0), new Vector3f(0,-1,0)
-    };
 
     public Matrix4f calcLightSpace() {
         if (getOwner() == null) {
             Logger.error("Unable to find owner for light component (" + this.getID() + ") to calculate light space");
             return null;
         }
-
-        float fovY = (float)(2.0 * Math.acos(spotLightOuterCutoff));
-        lightProj.identity().perspective(fovY, 1.0f, 0.1f, range);
         Vector3f pos = getOwner().transform.getPosition().add(offset, new Vector3f());
-        target.set(pos).add(spotLightDirection);
-        Vector3f upVec = Math.abs(spotLightDirection.y) < 0.999f ? up : new Vector3f(1, 0, 0);
-        lightView.identity().lookAt(pos, target, upVec);
-        lightProj.mul(lightView);
-        return lightProj;
+        return spotLightShadowMap.update(pos, spotLightDirection, spotLightOuterCutoff, range);
     }
 
     public Matrix4f[] calcLightSpaceCube() {
@@ -74,14 +48,7 @@ public class LightComponent extends Component {
             return null;
         }
         Vector3f pos = getOwner().transform.getPosition().add(offset, new Vector3f());
-        for (int face = 0; face < 6; face++) {
-            target.set(pos).add(CUBE_DIRS[face]);
-            lightView.identity().lookAt(pos, target, CUBE_UPS[face]);
-            cubeLightSpace[face].identity()
-                    .perspective((float) Math.toRadians(90.0), 1.0f, 0.1f, range)
-                    .mul(lightView);
-        }
-        return cubeLightSpace;
+        return pointLightShadowMap.update(pos, range);
     }
 
     public LightComponent(LightType type) {

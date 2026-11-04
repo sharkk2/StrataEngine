@@ -5,6 +5,9 @@ import org.lwjgl.BufferUtils;
 import org.sharkk2.sengine.Logger;
 import org.sharkk2.sengine.core.classes.Bounds;
 import org.sharkk2.sengine.core.classes.Component;
+import org.sharkk2.sengine.core.classes.enums.DrawMode;
+import org.sharkk2.sengine.core.classes.enums.MaterialTexture;
+import org.sharkk2.sengine.core.classes.enums.RenderMethod;
 import org.sharkk2.sengine.core.systems.renderer.Renderer;
 
 import java.nio.ByteBuffer;
@@ -27,26 +30,28 @@ public class ModelComponent extends Component {
     public static final int INSTANCE_STRIDE = INSTANCE_FLOATS * Float.BYTES;
     private static int instanceVbo = -1;
     public Material material = new Material();
-    private Renderer.DrawMode drawMode = Renderer.DrawMode.TRIANGLES;
+    private DrawMode drawMode = DrawMode.TRIANGLES;
     private boolean castShadow = true;
     public final Bounds bounds = new Bounds();
     public static final int MAX_BONE_INFLUENCE = 4;
     public int vboBoneIds, vboBoneWeights;
     public int[] boneIds;
     public float[] boneWeights;
-    private Renderer.RenderMethod renderMethod = Renderer.RenderMethod.RENDER_DEFERRED;
+    private RenderMethod renderMethod = RenderMethod.RENDER_DEFERRED;
     public boolean rigged = false;
     public boolean frustumCulled = true;
+    public boolean batchable = true;
     public int hash;
     private boolean hashDirty = true;
-    public String batchID = "";
+    private String batchID = "";
+    private int lastMaterialHash;
 
-    public void setCastShadow(boolean v) {this.castShadow = v; markHashDirty();}
+    public void setCastShadow(boolean v) {this.castShadow = v; hashDirty = true;}
     public boolean castsShadow() {return castShadow;}
-    public void setDrawMode(Renderer.DrawMode drawMode) {this.drawMode = drawMode; markHashDirty();}
-    public Renderer.DrawMode getDrawMode() {return drawMode;}
-    public void setRenderMethod(Renderer.RenderMethod method) {this.renderMethod = method; markHashDirty();}
-    public Renderer.RenderMethod getRenderMethod() {return renderMethod;}
+    public void setDrawMode(DrawMode drawMode) {this.drawMode = drawMode; hashDirty = true;}
+    public DrawMode getDrawMode() {return drawMode;}
+    public void setRenderMethod(RenderMethod method) {this.renderMethod = method; hashDirty = true;}
+    public RenderMethod getRenderMethod() {return renderMethod;}
 
     public static class Material {
         public Vector3f albedo = new Vector3f(1, 1, 1);
@@ -61,7 +66,6 @@ public class ModelComponent extends Component {
         private boolean albedoTransparent = false;
         public float alphaMaskThreshold = 0.5f;
         public boolean alphaCutout = false;
-        public enum MaterialTexture {ALBEDO, NORMAL, ROUGHNESS, METALNESS, AO, EMISSIVE, HEIGHT, OPACITY, ALPHA_MASK}
         private final int[] textures = new int[MaterialTexture.values().length];
 
         {Arrays.fill(textures, -1);}
@@ -317,7 +321,6 @@ public class ModelComponent extends Component {
         return copy;
     }
 
-    public void markHashDirty() {hashDirty = true;}
 
     @Override
     public int hashCode() {
@@ -336,35 +339,13 @@ public class ModelComponent extends Component {
         return hash;
     }
 
-
-    public void batch() {
-        if (owner == null) {
-            Logger.error("Can't batch an orphan component");
-            return;
-        }
-        Renderer renderer = owner.getEngine().getRenderer();
-        String nbatchID = hashCode() + ":" + material.hash(false);
-        if (batchID.equals(nbatchID)) return;
-        batchID = nbatchID;
-        Renderer.Batch batch = renderer.getRenderBatch(batchID);
-        if (batch != null) {batch.models.add(this); return;}
-        batch = renderer.createRenderBatch(batchID);
-        batch.models.add(this);
-    }
-
-    public void unbatch() {
-        if (owner == null) {
-            Logger.error("Can't unbatch an orphan component");
-            return;
-        }
-
-        Renderer renderer = owner.getEngine().getRenderer();
-        Renderer.Batch batch = renderer.getRenderBatch(batchID);
-        if (batch != null) {
-            batch.models.remove(this);
-            if (batch.models.isEmpty()) renderer.removeRenderBatch(batchID);
-        }
-        batchID = "";
+    public String getBatchID() {
+        if (!batchable) return "";
+        int mh = material.hash(false);
+        if (!hashDirty && mh == lastMaterialHash && !batchID.isEmpty()) return batchID;
+        lastMaterialHash = mh;
+        batchID = hashCode() + ":" + mh;
+        return batchID;
     }
 
     public static int getInstanceVbo() {return instanceVbo;}

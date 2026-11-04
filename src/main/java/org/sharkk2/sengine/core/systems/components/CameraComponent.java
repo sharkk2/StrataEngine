@@ -4,15 +4,16 @@ import org.joml.*;
 import org.sharkk2.sengine.core.classes.Component;
 import org.sharkk2.sengine.core.classes.GameObject;
 import org.sharkk2.sengine.core.classes.Scene;
+import org.sharkk2.sengine.core.classes.enums.CompassDirection;
 
 import java.lang.Math;
 import java.util.ArrayList;
 import java.util.List;
 
 public class CameraComponent extends Component {
-    private float fov = 60f;
-    private float near = 0.01f;
-    private float far = 1000f;
+    public float fov = 60f;
+    public float near = 0.01f;
+    public float far = 1000f;
 
     private float pitch = 0f;
     private float yaw = 0f;
@@ -23,7 +24,8 @@ public class CameraComponent extends Component {
     private float focusNearFalloff = 8f;
     private float focusFarFalloff = 40f;
     private float focusRange = 3f;
-    private float vignette = 0.5f;
+    public float vignette = 0.5f;
+    public float exposure = 1.3f;
 
     private final Vector3f up = new Vector3f(0, 1, 0);
     private final Vector3f right = new Vector3f();
@@ -45,7 +47,6 @@ public class CameraComponent extends Component {
     }
     public int getLensDirtTexture() {return lensDirtTexture;}
 
-    public enum CompassDirection {NORTH, SOUTH, EAST, WEST}
 
     public Matrix4f getViewMatrix() {
         Vector3f eye = new Vector3f(owner.transform.getPosition()).add(positionOffset);
@@ -158,12 +159,6 @@ public class CameraComponent extends Component {
 
     public float getYaw() { return yaw; }
     public float getPitch() { return pitch; }
-    public void setFov(float fov) { this.fov = fov; }
-    public float getFov() { return fov; }
-    public void setNear(float near) { this.near = near; }
-    public float getNear() { return near; }
-    public void setFar(float far) { this.far = far; }
-    public float getFar() { return far; }
     public Vector3f getDirection() {return new Vector3f(direction);}
     public void getDirection(Vector3f out) {out.set(direction);}
     public Vector3f getUp() {return new Vector3f(up);}
@@ -179,8 +174,6 @@ public class CameraComponent extends Component {
     public float getFocusDistance() {return focusDistance;}
     public float getFocusRange() {return focusRange;}
 
-    public float getVignette() {return vignette;}
-    public void setVignette(float vignette) {this.vignette = Math.clamp(vignette, 0, 1);}
 
 
     @Override
@@ -207,13 +200,14 @@ public class CameraComponent extends Component {
         copy.name = name + "_copy";
         copy.pitch = pitch;
         copy.yaw = yaw;
-        copy.setFar(far);
-        copy.setFov(fov);
-        copy.setNear(near);
+        copy.far = far;
+        copy.near = near;
+        copy.fov = fov;
         copy.setPositionOffset(positionOffset);
         copy.setLensDirtTexture(lensDirtTexture);
         copy.setColorGradingLUT(colorGradingLUT);
-        copy.setVignette(vignette);
+        copy.vignette = vignette;
+        copy.exposure = exposure;
         copy.depthOfField = depthOfField;
         copy.setFocusFarFalloff(focusFarFalloff);
         copy.setFocusDistance(focusDistance);
